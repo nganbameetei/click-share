@@ -4,6 +4,7 @@ import { Clock, Crown, ExternalLink, ImagePlus, Inbox, Sparkles, TrendingUp, Upl
 import { api, rupee } from '../api';
 import { useAuth } from '../auth';
 import { ACTIONS, Empty, Modal, PageLoader, PLATFORMS, PlatformTile, Spinner, useToast } from '../ui';
+import { MediaPreview } from '../media';
 
 const FILTERS = [{ key: '', label: 'All' }, ...Object.entries(PLATFORMS).map(([key, p]) => ({ key, label: p.label }))];
 
@@ -23,6 +24,9 @@ function TaskCard({ task, onStart }) {
   const left = task.TargetCount - task.Taken;
   return (
     <div className="card group flex flex-col p-5 transition hover:-translate-y-0.5 hover:border-white/20">
+      <button type="button" onClick={() => onStart(task)} className="-mx-1 -mt-1 mb-4 block text-left" aria-label={`Preview ${task.Title}`}>
+        <MediaPreview platform={task.Platform} url={task.TargetUrl} compact />
+      </button>
       <div className="flex items-start gap-3">
         <PlatformTile platform={task.Platform} />
         <div className="min-w-0 flex-1">
@@ -79,6 +83,8 @@ function SubmitModal({ task, onClose, onDone }) {
 
   return (
     <Modal open onClose={onClose} title={task.Title}>
+      <div className="-mr-2 max-h-[78vh] overflow-y-auto pr-2">
+      <MediaPreview platform={task.Platform} url={task.TargetUrl} className="mb-5" />
       <ol className="space-y-4">
         <li className="flex gap-3">
           <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold ${opened ? 'bg-emerald-500 text-white' : 'bg-white/10'}`}>
@@ -107,6 +113,7 @@ function SubmitModal({ task, onClose, onDone }) {
           </form>
         </li>
       </ol>
+      </div>
     </Modal>
   );
 }

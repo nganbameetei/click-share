@@ -3,6 +3,9 @@ import { Copy, Megaphone, Pause, Play, Plus, Rocket, Square, Wallet as WalletIco
 import { api, rupee, timeAgo } from '../api';
 import { useAuth } from '../auth';
 import { ACTIONS, Empty, Modal, PageLoader, PLATFORMS, PlatformTile, Spinner, StatusBadge, useToast } from '../ui';
+import { MediaPreview } from '../media';
+
+const isUrl = (v) => { try { return /^https?:/.test(new URL(v).protocol); } catch { return false; } };
 
 const EMPTY = { title: '', description: '', platform: 'instagram', actionType: 'like', targetUrl: '', targetCount: 50 };
 const PLACEHOLDER = {
@@ -73,7 +76,13 @@ function NewTaskForm({ pricing, balance, onCreated, onAddFunds }) {
       </div>
 
       <div><label className="label">Link to your post / page / channel</label>
-        <input className="input" type="url" placeholder={PLACEHOLDER[f.platform]} value={f.targetUrl} onChange={set('targetUrl')} required /></div>
+        <input className="input" type="url" placeholder={PLACEHOLDER[f.platform]} value={f.targetUrl} onChange={set('targetUrl')} required />
+        {isUrl(f.targetUrl) && (
+          <div className="mt-2">
+            <div className="mb-1 text-[11px] text-slate-500">Preview: this is what users will see</div>
+            <MediaPreview platform={f.platform} url={f.targetUrl} compact />
+          </div>
+        )}</div>
       <div><label className="label">Title shown to users</label>
         <input className="input" placeholder="e.g. Like my new cooking reel" maxLength={120} value={f.title} onChange={set('title')} required /></div>
       <div><label className="label">Note for users (optional)</label>

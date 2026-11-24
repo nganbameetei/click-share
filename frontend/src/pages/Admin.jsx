@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Ban, Check, Crown, ExternalLink, Inbox, Megaphone, Pause, Play, Plus, Search, Wallet, X } from 'lucide-react';
 import { api, rupee, timeAgo } from '../api';
+import { MediaPreview } from '../media';
 import { ACTIONS, Empty, Modal, PageLoader, PLATFORMS, PlatformTile, Spinner, StatusBadge, useToast } from '../ui';
 
 const TABS = [
@@ -193,6 +194,7 @@ function Campaigns() {
                     </a>
                   </div>
                 </div>
+                <MediaPreview platform={c.Platform} url={c.TargetUrl} compact className="mt-3" />
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <button className="btn-danger" onClick={() => review(c, false)}><X size={16} /> Reject</button>
                   <button className="btn-success" onClick={() => review(c, true)}><Check size={16} /> Approve</button>
