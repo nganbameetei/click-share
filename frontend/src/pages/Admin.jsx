@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Ban, Check, ExternalLink, Inbox, Megaphone, Pause, Play, Plus, Search, X } from 'lucide-react';
+import { Ban, Check, Crown, ExternalLink, Inbox, Megaphone, Pause, Play, Plus, Search, X } from 'lucide-react';
 import { api, rupee, timeAgo } from '../api';
 import { ACTIONS, Empty, Modal, PageLoader, PLATFORMS, PlatformTile, Spinner, StatusBadge, useToast } from '../ui';
 
@@ -335,7 +335,10 @@ function PlanRequests() {
             <div key={p.Id} className="flex flex-wrap items-center gap-3 p-4">
               <div className="min-w-[12rem] flex-1">
                 <div className="font-bold">{p.PlanName} · {rupee(p.Amount, 0)}</div>
-                <div className="text-xs text-slate-500">{p.UserName} ({p.UserEmail}) · UTR <span className="font-mono">{p.PaymentRef}</span> · {timeAgo(p.CreatedAt)}</div>
+                <div className="text-xs text-slate-500">
+                  {p.UserName} ({p.UserEmail}) · {p.PaymentRef === 'ADMIN' ? 'Set by admin' : <>UTR <span className="font-mono">{p.PaymentRef}</span></>} · {timeAgo(p.CreatedAt)}
+                </div>
+                {p.Remark && <div className="mt-0.5 text-xs text-amber-200">“{p.Remark}”</div>}
               </div>
               {p.Status === 'pending' ? (
                 <div className="flex gap-2">
@@ -351,12 +354,121 @@ function PlanRequests() {
   );
 }
 
+/* ---------------- Change a user's plan (no payment needed) ---------------- */
+const QUICK_REMARKS = ['Paid cash', 'Paid by UPI', 'Free trial', 'Promo / gift'];
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
+
+function ChangePlanModal({ user, onClose, onDone }) {
+  const toast = useToast();
+  const [plans, setPlans] = useState([]);
+  const [history, setHistory] = useState(null);
+  const [f, setF] = useState({ planId: null, days: '', amount: '', remark: '' });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api('/plans').then((ps) => {
+      setPlans(ps);
+      const first = ps.find((p) => p.Price > 0 && p.Id !== user.PlanId) || ps[0];
+      setF((x) => ({ ...x, planId: first.Id, days: String(first.DurationDays), amount: String(first.Price) }));
+    }).catch(() => {});
+    api(`/admin/users/${user.Id}/plans`).then(setHistory).catch(() => setHistory([]));
+  }, [user]);
+
+  const plan = plans.find((p) => p.Id === f.planId);
+  const pick = (p) => setF({ ...f, planId: p.Id, days: String(p.DurationDays), amount: String(p.Price) });
+  const extends_ = plan && plan.Price > 0 && plan.Id === user.PlanId && !user.PlanExpired && user.PlanExpiresAt;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await api(`/admin/users/${user.Id}/plan`, { method: 'POST', body: { ...f } });
+      toast(r.expiresAt ? `${r.plan} active until ${fmtDate(r.expiresAt)}` : `Moved to ${r.plan}`);
+      onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Change plan · ${user.Name}`}>
+      <div className="max-h-[72vh] space-y-4 overflow-y-auto pr-1">
+        <div className="rounded-xl bg-white/5 p-3 text-sm">
+          Now: <b>{user.PlanName}</b>
+          {user.PlanId > 1 && <span className={user.PlanExpired ? 'text-rose-300' : 'text-slate-400'}> · {user.PlanExpired ? 'expired' : 'until'} {fmtDate(user.PlanExpiresAt)}</span>}
+        </div>
+
+        <form onSubmit={submit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            {plans.map((p) => (
+              <button type="button" key={p.Id} onClick={() => pick(p)}
+                className={`rounded-xl border p-3 text-left transition ${f.planId === p.Id ? 'border-fuchsia-500/60 bg-fuchsia-500/10' : 'border-white/10 bg-white/[0.03] hover:bg-white/5'}`}>
+                <div className="font-bold">{p.Name}</div>
+                <div className="text-xs text-slate-400">{p.Price > 0 ? `${rupee(p.Price, 0)} · ${p.DailyTaskLimit}/day` : `${p.DailyTaskLimit} tasks/day`}{p.RewardBonusPct ? ` · +${p.RewardBonusPct}%` : ''}</div>
+              </button>
+            ))}
+          </div>
+
+          {plan && plan.Price > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="label">Days</label>
+                <input className="input" type="number" min="1" max="3650" value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} required /></div>
+              <div><label className="label">Amount received (₹)</label>
+                <input className="input" type="number" min="0" step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} required /></div>
+            </div>
+          )}
+          {plan && plan.Price > 0 && (
+            <p className="text-xs text-slate-400">
+              {extends_ ? `Adds ${f.days || 0} days to the current end date (${fmtDate(user.PlanExpiresAt)}).` : `Starts today and ends after ${f.days || 0} days.`} Enter ₹0 for a free upgrade.
+            </p>
+          )}
+
+          <div>
+            <label className="label">Remark (required)</label>
+            <input className="input" placeholder="e.g. Paid cash at office" maxLength={200} value={f.remark} onChange={(e) => setF({ ...f, remark: e.target.value })} required />
+            <div className="mt-2 flex flex-wrap gap-2">
+              {QUICK_REMARKS.map((r) => (
+                <button type="button" key={r} onClick={() => setF({ ...f, remark: r })}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold ${f.remark === r ? 'bg-fuchsia-500/20 text-fuchsia-200' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>{r}</button>
+              ))}
+            </div>
+          </div>
+          <button className="btn-primary w-full py-3" disabled={busy || !plan}>{busy ? <Spinner /> : `Activate ${plan?.Name || ''} as paid`}</button>
+        </form>
+
+        <div>
+          <div className="label">Plan history</div>
+          {history === null ? <Spinner /> : history.length === 0 ? <p className="text-xs text-slate-500">No plan changes yet.</p> : (
+            <div className="divide-y divide-white/5 rounded-xl bg-white/[0.03]">
+              {history.map((h) => (
+                <div key={h.Id} className="flex items-start justify-between gap-3 p-3 text-xs">
+                  <div>
+                    <div className="font-semibold text-slate-200">{h.PlanName} · {rupee(h.Amount, 0)} {h.ExpiresAt ? `· until ${fmtDate(h.ExpiresAt)}` : ''}</div>
+                    <div className="text-slate-500">
+                      {h.PaymentRef === 'ADMIN' ? `Set by ${h.GrantedByName || 'admin'}` : `UTR ${h.PaymentRef}`} · {fmtDate(h.ProcessedAt || h.CreatedAt)}
+                    </div>
+                    {h.Remark && <div className="mt-0.5 text-amber-200">“{h.Remark}”</div>}
+                  </div>
+                  <StatusBadge status={h.Status} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ---------------- Users ---------------- */
 function Users() {
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [rows, load] = useList(`/admin/users?q=${encodeURIComponent(search)}`);
   const [busyId, run] = useAction(load);
+  const [planUser, setPlanUser] = useState(null);
   return (
     <>
       <form className="relative mb-4 max-w-sm" onSubmit={(e) => { e.preventDefault(); setSearch(q); }}>
@@ -373,16 +485,22 @@ function Users() {
               {rows.map((u) => (
                 <tr key={u.Id} className={u.IsBlocked ? 'opacity-50' : ''}>
                   <td className="px-4 py-3"><div className="font-semibold">{u.Name} {u.Role !== 'user' && <span className="ml-1 rounded bg-fuchsia-500/20 px-1.5 py-0.5 text-[10px] uppercase text-fuchsia-300">{u.Role}</span>}</div><div className="text-xs text-slate-500">{u.Email}</div></td>
-                  <td className="px-4 py-3">{u.PlanName}</td>
+                  <td className="px-4 py-3">
+                    <div className={u.PlanExpired ? 'text-slate-500 line-through' : 'font-semibold'}>{u.PlanName}</div>
+                    {u.PlanId > 1 && <div className={`text-xs ${u.PlanExpired ? 'text-rose-300' : 'text-slate-500'}`}>{u.PlanExpired ? 'expired' : 'until'} {fmtDate(u.PlanExpiresAt)}</div>}
+                  </td>
                   <td className="px-4 py-3 font-semibold">{rupee(u.Balance)}</td>
                   <td className="px-4 py-3">{rupee(u.TotalEarned)}</td>
                   <td className="px-4 py-3 text-slate-400">{timeAgo(u.CreatedAt)}</td>
                   <td className="px-4 py-3 text-right">
-                    {u.Role !== 'admin' && (
-                      <button className="btn-ghost px-3 py-1.5 text-xs" disabled={busyId === u.Id} onClick={() => run(u.Id, `/admin/users/${u.Id}/block`, null, u.IsBlocked ? 'Unblocked' : 'Blocked')}>
-                        <Ban size={14} /> {u.IsBlocked ? 'Unblock' : 'Block'}
-                      </button>
-                    )}
+                    <div className="flex justify-end gap-2">
+                      <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setPlanUser(u)}><Crown size={14} /> Plan</button>
+                      {u.Role !== 'admin' && (
+                        <button className="btn-ghost px-3 py-1.5 text-xs" disabled={busyId === u.Id} onClick={() => run(u.Id, `/admin/users/${u.Id}/block`, null, u.IsBlocked ? 'Unblocked' : 'Blocked')}>
+                          <Ban size={14} /> {u.IsBlocked ? 'Unblock' : 'Block'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -390,6 +508,7 @@ function Users() {
           </table>
         </div>
       )}
+      {planUser && <ChangePlanModal user={planUser} onClose={() => setPlanUser(null)} onDone={() => { setPlanUser(null); load(); }} />}
     </>
   );
 }

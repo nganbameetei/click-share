@@ -111,8 +111,11 @@ CREATE TABLE IF NOT EXISTS PlanPurchases (
   UserId      INTEGER NOT NULL REFERENCES Users(Id),
   PlanId      INTEGER NOT NULL REFERENCES Plans(Id),
   Amount      REAL    NOT NULL,
-  PaymentRef  TEXT    NOT NULL,          -- UPI UTR number
+  PaymentRef  TEXT    NOT NULL,          -- UPI UTR number, or 'ADMIN' when set by an admin
   Status      TEXT    NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending','approved','rejected')),
+  Remark      TEXT,                      -- admin's comment (e.g. "Paid cash", "Free promo")
+  GrantedBy   INTEGER REFERENCES Users(Id),
+  ExpiresAt   TEXT,                      -- plan end date this record gave the user
   CreatedAt   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   ProcessedAt TEXT
 );

@@ -61,6 +61,9 @@ async function initDb() {
     ['Campaigns', 'ReviewStatus', "TEXT NOT NULL DEFAULT 'approved'"],
     ['Campaigns', 'Budget', 'REAL NOT NULL DEFAULT 0'],
     ['Campaigns', 'RejectReason', 'TEXT'],
+    ['PlanPurchases', 'Remark', 'TEXT'],
+    ['PlanPurchases', 'GrantedBy', 'INTEGER'],
+    ['PlanPurchases', 'ExpiresAt', 'TEXT'],
   ];
   for (const [table, col, def] of added) {
     const cols = await query(`SELECT name FROM pragma_table_info('${table}')`);

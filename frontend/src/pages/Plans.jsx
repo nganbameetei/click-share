@@ -90,7 +90,10 @@ export default function Plans() {
               <div key={r.Id} className="flex items-center gap-3 p-4">
                 <div className="flex-1">
                   <div className="text-sm font-semibold">{r.PlanName} · {rupee(r.Amount, 0)}</div>
-                  <div className="text-xs text-slate-500">UTR {r.PaymentRef} · {timeAgo(r.CreatedAt)}</div>
+                  <div className="text-xs text-slate-500">
+                    {r.PaymentRef === 'ADMIN' ? 'Activated by admin' : `UTR ${r.PaymentRef}`} · {timeAgo(r.CreatedAt)}
+                    {r.ExpiresAt ? ` · until ${new Date(r.ExpiresAt).toLocaleDateString('en-IN')}` : ''}
+                  </div>
                 </div>
                 <StatusBadge status={r.Status} />
               </div>

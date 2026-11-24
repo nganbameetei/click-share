@@ -219,6 +219,8 @@ router.post('/purchases/:id/approve', wrap(async (req, res) => {
     await q(`UPDATE Users SET PlanId=@pid,
                PlanExpiresAt=strftime('%Y-%m-%dT%H:%M:%fZ','now', '+' || (SELECT DurationDays FROM Plans WHERE Id=@pid) || ' days')
              WHERE Id=@uid`, { pid: pp.PlanId, uid: pp.UserId });
+    await q('UPDATE PlanPurchases SET ExpiresAt=(SELECT PlanExpiresAt FROM Users WHERE Id=@uid), GrantedBy=@admin WHERE Id=@id',
+      { uid: pp.UserId, id: Number(req.params.id), admin: req.user.id });
     return true;
   });
   if (!ok) return res.status(409).json({ error: 'Already processed' });
@@ -238,9 +240,53 @@ router.get('/users', wrap(async (req, res) => {
   const search = `%${req.query.q || ''}%`;
   res.json(await query(
     `SELECT u.Id, u.Name, u.Email, u.Phone, u.Role, u.Balance, u.TotalEarned, u.IsBlocked, u.CreatedAt,
-            u.PlanExpiresAt, p.Name AS PlanName
+            u.PlanId, u.PlanExpiresAt, p.Name AS PlanName,
+            CASE WHEN u.PlanId>1 AND u.PlanExpiresAt IS NOT NULL AND u.PlanExpiresAt <= ${NOW} THEN 1 ELSE 0 END AS PlanExpired
      FROM Users u JOIN Plans p ON p.Id=u.PlanId
      WHERE u.Name LIKE @q OR u.Email LIKE @q ORDER BY u.CreatedAt DESC LIMIT 200`, { q: search }));
+}));
+
+/** Plan history for one user (purchases + admin changes). */
+router.get('/users/:id/plans', wrap(async (req, res) => {
+  res.json(await query(
+    `SELECT pp.*, p.Name AS PlanName, a.Name AS GrantedByName
+     FROM PlanPurchases pp JOIN Plans p ON p.Id=pp.PlanId LEFT JOIN Users a ON a.Id=pp.GrantedBy
+     WHERE pp.UserId=@uid ORDER BY pp.Id DESC`, { uid: Number(req.params.id) }));
+}));
+
+/**
+ * Admin sets any plan for a user without online payment, recorded as paid with a remark.
+ * Same plan still active → extends from the current end date; otherwise starts today.
+ */
+router.post('/users/:id/plan', wrap(async (req, res) => {
+  const uid = Number(req.params.id);
+  const b = req.body || {};
+  const remark = (b.remark || '').trim();
+  if (remark.length < 2) return res.status(400).json({ error: 'Add a remark, e.g. "Paid cash" or "Free trial"' });
+  const [plan] = await query('SELECT * FROM Plans WHERE Id=@id', { id: Number(b.planId) });
+  if (!plan) return res.status(400).json({ error: 'Choose a plan' });
+  const [user] = await query('SELECT Id, PlanId, PlanExpiresAt FROM Users WHERE Id=@id', { id: uid });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const isFree = plan.Price <= 0;
+  const days = isFree ? null : Math.floor(Number(b.days) || plan.DurationDays);
+  if (!isFree && !(days >= 1 && days <= 3650)) return res.status(400).json({ error: 'Days must be between 1 and 3650' });
+  const amount = isFree ? 0 : b.amount === '' || b.amount === undefined ? plan.Price : Number(b.amount);
+  if (!(amount >= 0)) return res.status(400).json({ error: 'Amount must be 0 or more' });
+
+  let expires = null;
+  if (!isFree) {
+    const current = user.PlanId === plan.Id && user.PlanExpiresAt ? Date.parse(user.PlanExpiresAt) : 0;
+    expires = new Date(Math.max(current, Date.now()) + days * 86400000).toISOString();
+  }
+
+  await tx(async (q) => {
+    await q('UPDATE Users SET PlanId=@pid, PlanExpiresAt=@exp WHERE Id=@uid', { pid: plan.Id, exp: expires, uid });
+    await q(`INSERT INTO PlanPurchases (UserId, PlanId, Amount, PaymentRef, Status, Remark, GrantedBy, ExpiresAt, ProcessedAt)
+             VALUES (@uid, @pid, @amount, 'ADMIN', 'approved', @remark, @admin, @exp, ${NOW})`,
+      { uid, pid: plan.Id, amount, remark, admin: req.user.id, exp: expires });
+  });
+  res.json({ ok: true, plan: plan.Name, expiresAt: expires });
 }));
 
 router.post('/users/:id/block', wrap(async (req, res) => {
