@@ -4,7 +4,7 @@ import { api, rupee, timeAgo } from '../api';
 import { ACTIONS, Empty, Modal, PageLoader, PLATFORMS, PlatformTile, Spinner, StatusBadge, useToast } from '../ui';
 
 const TABS = [
-  ['overview', 'Overview'], ['proofs', 'Proofs'], ['campaigns', 'Campaigns'],
+  ['overview', 'Overview'], ['proofs', 'Proofs'], ['campaigns', 'Campaigns'], ['deposits', 'Add funds'],
   ['withdrawals', 'Withdrawals'], ['plans', 'Plan requests'], ['users', 'Users'],
 ];
 
@@ -50,15 +50,19 @@ function Overview({ goto }) {
     ['Plan revenue', rupee(s.PlanRevenue), 'approved purchases'],
     ['Withdrawn', rupee(s.Withdrawn), 'paid out to UPI'],
     ['Wallet liability', rupee(s.Liability), 'owed to users'],
+    ['Funds added', rupee(s.Deposited), 'by users to promote posts'],
+    ['Ad credits', rupee(s.AdCredits), 'unspent, not withdrawable'],
   ];
   const queues = [
     ['proofs', 'Proofs to review', s.PendingSubmissions],
+    ['campaigns', 'User tasks to review', s.PendingReviews],
+    ['deposits', 'Added funds to verify', s.PendingDeposits],
     ['withdrawals', 'Withdrawals to pay', s.PendingWithdrawals],
     ['plans', 'Plan payments to verify', s.PendingPlans],
   ];
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {queues.map(([tab, label, n]) => (
           <button key={tab} onClick={() => goto(tab)} className={`card p-5 text-left transition hover:-translate-y-0.5 ${n ? 'border-amber-500/40' : ''}`}>
             <div className="text-sm text-slate-400">{label}</div>
@@ -157,29 +161,67 @@ function Campaigns() {
     catch (err) { toast(err.message, 'error'); }
   };
 
+  const review = async (c, ok) => {
+    const reason = ok ? null : prompt('Reason for rejection? (the full amount is refunded as ad credits)', 'Link not allowed');
+    if (!ok && reason === null) return;
+    try {
+      await api(`/admin/campaigns/${c.Id}/${ok ? 'approve' : 'reject'}`, { method: 'POST', body: ok ? {} : { reason } });
+      toast(ok ? 'Task is live' : 'Rejected & refunded'); load();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  const pending = (rows || []).filter((c) => c.ReviewStatus === 'pending');
+  const others = (rows || []).filter((c) => c.ReviewStatus !== 'pending');
+
   return (
     <>
+      {pending.length > 0 && (
+        <div className="mb-6">
+          <h3 className="mb-3 font-bold text-violet-200">User tasks waiting for review ({pending.length})</h3>
+          <div className="grid gap-3 md:grid-cols-2">
+            {pending.map((c) => (
+              <div key={c.Id} className="card border-violet-500/30 p-4">
+                <div className="flex items-start gap-3">
+                  <PlatformTile platform={c.Platform} size="h-10 w-10" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold">{c.Title}</div>
+                    <div className="text-xs text-slate-400">{ACTIONS[c.ActionType].label} × {c.TargetCount} · paid {rupee(c.Budget)} · by {c.OwnerName} ({c.OwnerEmail})</div>
+                    {c.Description && <div className="mt-1 text-xs text-slate-400">“{c.Description}”</div>}
+                    <a href={c.TargetUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs text-fuchsia-300 hover:underline">
+                      <ExternalLink size={12} /> {c.TargetUrl}
+                    </a>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button className="btn-danger" onClick={() => review(c, false)}><X size={16} /> Reject</button>
+                  <button className="btn-success" onClick={() => review(c, true)}><Check size={16} /> Approve</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mb-4 flex justify-end"><button className="btn-primary" onClick={() => setOpen(true)}><Plus size={16} /> New campaign</button></div>
-      {rows === null ? <PageLoader /> : rows.length === 0 ? <Empty icon={Megaphone} title="No campaigns" text="Create one to give users tasks." /> : (
+      {rows === null ? <PageLoader /> : others.length === 0 ? <Empty icon={Megaphone} title="No campaigns" text="Create one to give users tasks." /> : (
         <div className="card divide-y divide-white/5">
-          {rows.map((c) => {
+          {others.map((c) => {
             const pct = Math.round((c.CompletedCount / c.TargetCount) * 100);
+            const live = c.ReviewStatus === 'approved' && c.Status !== 'completed';
             return (
               <div key={c.Id} className="flex flex-wrap items-center gap-4 p-4">
                 <PlatformTile platform={c.Platform} size="h-10 w-10" />
                 <div className="min-w-[12rem] flex-1">
                   <div className="text-sm font-semibold">{c.Title}</div>
                   <div className="text-xs text-slate-500">
-                    {ACTIONS[c.ActionType].label} · Advertiser {rupee(c.AdvertiserRate, 2)} · User {rupee(c.UserReward, 2)} · {c.PendingCount} pending
+                    {c.OwnerName ? `By ${c.OwnerName} · ` : ''}{ACTIONS[c.ActionType].label} · Advertiser {rupee(c.AdvertiserRate, 2)} · User {rupee(c.UserReward, 2)} · {c.PendingCount} pending
                   </div>
                   <div className="mt-2 flex items-center gap-2">
                     <div className="h-1.5 w-40 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-gradient-to-r from-violet-500 to-pink-500" style={{ width: `${pct}%` }} /></div>
                     <span className="text-xs text-slate-400">{c.CompletedCount}/{c.TargetCount}</span>
                   </div>
                 </div>
-                <StatusBadge status={c.Status} />
-                {c.Status === 'active' && <button className="btn-ghost" onClick={() => setStatus(c.Id, 'paused')}><Pause size={15} /> Pause</button>}
-                {c.Status === 'paused' && <button className="btn-ghost" onClick={() => setStatus(c.Id, 'active')}><Play size={15} /> Resume</button>}
+                <StatusBadge status={c.ReviewStatus === 'rejected' ? 'rejected' : c.Status} />
+                {live && c.Status === 'active' && <button className="btn-ghost" onClick={() => setStatus(c.Id, 'paused')}><Pause size={15} /> Pause</button>}
+                {live && c.Status === 'paused' && <button className="btn-ghost" onClick={() => setStatus(c.Id, 'active')}><Play size={15} /> Resume</button>}
               </div>
             );
           })}
@@ -240,6 +282,37 @@ function Withdrawals() {
                   </button>
                 </div>
               ) : <StatusBadge status={w.Status} />}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ---------------- Added funds (ad credits) ---------------- */
+function Deposits() {
+  const [status, setStatus] = useState('pending');
+  const [rows, load] = useList(`/admin/deposits?status=${status}`);
+  const [busyId, run] = useAction(load);
+  return (
+    <>
+      <p className="mb-3 text-sm text-slate-400">Check each UTR in your UPI app before approving. Approved amounts become ad credits (for promotion only, not withdrawable).</p>
+      <StatusFilter value={status} onChange={setStatus} options={['pending', 'approved', 'rejected']} />
+      {rows === null ? <PageLoader /> : rows.length === 0 ? <Empty icon={Inbox} title="Nothing here" /> : (
+        <div className="card divide-y divide-white/5">
+          {rows.map((d) => (
+            <div key={d.Id} className="flex flex-wrap items-center gap-3 p-4">
+              <div className="min-w-[12rem] flex-1">
+                <div className="font-bold">{rupee(d.Amount, 0)} <span className="text-sm font-medium text-slate-400">· UTR <span className="font-mono">{d.PaymentRef}</span></span></div>
+                <div className="text-xs text-slate-500">{d.UserName} ({d.UserEmail}) · {timeAgo(d.CreatedAt)}</div>
+              </div>
+              {d.Status === 'pending' ? (
+                <div className="flex gap-2">
+                  <button className="btn-danger" disabled={busyId === d.Id} onClick={() => run(d.Id, `/admin/deposits/${d.Id}/reject`, null, 'Rejected')}><X size={16} /> Reject</button>
+                  <button className="btn-success" disabled={busyId === d.Id} onClick={() => run(d.Id, `/admin/deposits/${d.Id}/approve`, null, 'Credits added')}><Check size={16} /> Approve</button>
+                </div>
+              ) : <StatusBadge status={d.Status} />}
             </div>
           ))}
         </div>
@@ -335,6 +408,7 @@ export default function Admin() {
       {tab === 'overview' && <Overview goto={setTab} />}
       {tab === 'proofs' && <Proofs />}
       {tab === 'campaigns' && <Campaigns />}
+      {tab === 'deposits' && <Deposits />}
       {tab === 'withdrawals' && <Withdrawals />}
       {tab === 'plans' && <PlanRequests />}
       {tab === 'users' && <Users />}

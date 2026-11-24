@@ -14,6 +14,7 @@ app.use('/uploads', express.static(uploads));
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/promote', require('./routes/promote'));
 app.use('/api', require('./routes/user'));
 
 // In production, serve the built React app from the same server

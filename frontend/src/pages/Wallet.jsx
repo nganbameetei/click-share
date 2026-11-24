@@ -54,6 +54,7 @@ export default function Wallet() {
             <div className="flex items-center gap-2 text-sm text-white/80"><WalletIcon size={16} /> Available balance</div>
             <div className="mt-2 text-4xl font-extrabold">{rupee(me.Balance)}</div>
             <div className="mt-1 text-sm text-white/80">Lifetime earnings: {rupee(me.TotalEarned)}</div>
+            {me.AdBalance > 0 && <div className="mt-1 text-sm text-white/80">Ad credits (for promotion): {rupee(me.AdBalance)}</div>}
             {!canWithdraw && (
               <div className="mt-6">
                 <div className="flex justify-between text-xs font-semibold text-white/90">

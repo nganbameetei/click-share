@@ -1,6 +1,7 @@
 const express = require('express');
 const { query, tx, NOW } = require('../db');
 const { requireAuth, requireAdmin } = require('../auth');
+const { creditAd } = require('../wallet');
 
 const router = express.Router();
 const SHARE = Number(process.env.USER_REWARD_SHARE || 0.4);
@@ -18,6 +19,10 @@ router.get('/stats', wrap(async (_req, res) => {
       (SELECT COUNT(*) FROM Submissions WHERE Status='pending') AS PendingSubmissions,
       (SELECT COUNT(*) FROM Withdrawals WHERE Status='pending') AS PendingWithdrawals,
       (SELECT COUNT(*) FROM PlanPurchases WHERE Status='pending') AS PendingPlans,
+      (SELECT COUNT(*) FROM Campaigns WHERE ReviewStatus='pending') AS PendingReviews,
+      (SELECT COUNT(*) FROM Deposits WHERE Status='pending') AS PendingDeposits,
+      (SELECT IFNULL(SUM(Amount),0) FROM Deposits WHERE Status='approved') AS Deposited,
+      (SELECT IFNULL(SUM(AdBalance),0) FROM Users) AS AdCredits,
       (SELECT IFNULL(SUM(c.AdvertiserRate),0) FROM Submissions s JOIN Campaigns c ON c.Id=s.CampaignId WHERE s.Status='approved') AS AdvertiserRevenue,
       (SELECT IFNULL(SUM(s.Reward),0) FROM Submissions s WHERE s.Status='approved') AS UserPayouts,
       (SELECT IFNULL(SUM(Amount),0) FROM PlanPurchases WHERE Status='approved') AS PlanRevenue,
@@ -55,19 +60,56 @@ router.post('/submissions/:id/approve', wrap(async (req, res) => {
 }));
 
 router.post('/submissions/:id/reject', wrap(async (req, res) => {
-  const rows = await query(
-    `UPDATE Submissions SET Status='rejected', RejectReason=@reason, ReviewedBy=@admin, ReviewedAt=${NOW}
-     WHERE Id=@id AND Status='pending' RETURNING Id`,
-    { id: Number(req.params.id), admin: req.user.id, reason: req.body?.reason || 'Proof not valid' });
-  if (!rows.length) return res.status(409).json({ error: 'Already reviewed' });
+  const ok = await tx(async (q) => {
+    const [s] = await q(
+      `UPDATE Submissions SET Status='rejected', RejectReason=@reason, ReviewedBy=@admin, ReviewedAt=${NOW}
+       WHERE Id=@id AND Status='pending' RETURNING CampaignId`,
+      { id: Number(req.params.id), admin: req.user.id, reason: req.body?.reason || 'Proof not valid' });
+    if (!s) return false;
+    // A user-posted task that was already stopped: give the freed slot back to its owner
+    const [c] = await q('SELECT * FROM Campaigns WHERE Id=@id', { id: s.CampaignId });
+    if (c.AdvertiserId && c.Status === 'completed' && c.CompletedCount < c.TargetCount) {
+      await q('UPDATE Campaigns SET TargetCount=TargetCount-1 WHERE Id=@id', { id: c.Id });
+      await creditAd(q, c.AdvertiserId, c.AdvertiserRate, 'campaign_refund', c.Id, `Refund for "${c.Title}" (rejected proof)`);
+    }
+    return true;
+  });
+  if (!ok) return res.status(409).json({ error: 'Already reviewed' });
   res.json({ ok: true });
 }));
 
 /* ---------------- Campaigns ---------------- */
-router.get('/campaigns', wrap(async (_req, res) => {
+router.get('/campaigns', wrap(async (req, res) => {
+  const review = req.query.review === 'pending';
   res.json(await query(
-    `SELECT c.*, (SELECT COUNT(*) FROM Submissions s WHERE s.CampaignId=c.Id AND s.Status='pending') AS PendingCount
-     FROM Campaigns c ORDER BY c.CreatedAt DESC`));
+    `SELECT c.*, u.Name AS OwnerName, u.Email AS OwnerEmail,
+            (SELECT COUNT(*) FROM Submissions s WHERE s.CampaignId=c.Id AND s.Status='pending') AS PendingCount
+     FROM Campaigns c LEFT JOIN Users u ON u.Id=c.AdvertiserId
+     ${review ? "WHERE c.ReviewStatus='pending'" : ''}
+     ORDER BY c.Id DESC`));
+}));
+
+/* User-posted tasks: approve to go live, or reject and refund the full budget as ad credits */
+router.post('/campaigns/:id/approve', wrap(async (req, res) => {
+  const rows = await query(
+    `UPDATE Campaigns SET ReviewStatus='approved', Status='active'
+     WHERE Id=@id AND ReviewStatus='pending' RETURNING Id`, { id: Number(req.params.id) });
+  if (!rows.length) return res.status(409).json({ error: 'Already reviewed' });
+  res.json({ ok: true });
+}));
+
+router.post('/campaigns/:id/reject', wrap(async (req, res) => {
+  const ok = await tx(async (q) => {
+    const [c] = await q(
+      `UPDATE Campaigns SET ReviewStatus='rejected', Status='completed', RejectReason=@reason
+       WHERE Id=@id AND ReviewStatus='pending' RETURNING *`,
+      { id: Number(req.params.id), reason: req.body?.reason || 'Not allowed' });
+    if (!c) return false;
+    await creditAd(q, c.AdvertiserId, c.Budget, 'campaign_refund', c.Id, `Refund for "${c.Title}" (not approved)`);
+    return true;
+  });
+  if (!ok) return res.status(409).json({ error: 'Already reviewed' });
+  res.json({ ok: true });
 }));
 
 router.post('/campaigns', wrap(async (req, res) => {
@@ -90,8 +132,40 @@ router.post('/campaigns', wrap(async (req, res) => {
 
 router.patch('/campaigns/:id/status', wrap(async (req, res) => {
   const status = req.body?.status;
-  if (!['active', 'paused', 'completed'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
-  await query('UPDATE Campaigns SET Status=@status WHERE Id=@id', { id: Number(req.params.id), status });
+  if (!['active', 'paused'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const rows = await query(
+    `UPDATE Campaigns SET Status=@status WHERE Id=@id AND ReviewStatus='approved' AND Status<>'completed' RETURNING Id`,
+    { id: Number(req.params.id), status });
+  if (!rows.length) return res.status(400).json({ error: 'This campaign cannot be changed' });
+  res.json({ ok: true });
+}));
+
+/* ---------------- Deposits (ad credits) ---------------- */
+router.get('/deposits', wrap(async (req, res) => {
+  const status = ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending';
+  res.json(await query(
+    `SELECT d.*, u.Name AS UserName, u.Email AS UserEmail FROM Deposits d JOIN Users u ON u.Id=d.UserId
+     WHERE d.Status=@status ORDER BY d.Id DESC`, { status }));
+}));
+
+router.post('/deposits/:id/approve', wrap(async (req, res) => {
+  const ok = await tx(async (q) => {
+    const [d] = await q(
+      `UPDATE Deposits SET Status='approved', ProcessedAt=${NOW}
+       WHERE Id=@id AND Status='pending' RETURNING *`, { id: Number(req.params.id) });
+    if (!d) return false;
+    await creditAd(q, d.UserId, d.Amount, 'deposit', d.Id, `Added funds (UTR ${d.PaymentRef})`);
+    return true;
+  });
+  if (!ok) return res.status(409).json({ error: 'Already processed' });
+  res.json({ ok: true });
+}));
+
+router.post('/deposits/:id/reject', wrap(async (req, res) => {
+  const rows = await query(
+    `UPDATE Deposits SET Status='rejected', ProcessedAt=${NOW} WHERE Id=@id AND Status='pending' RETURNING Id`,
+    { id: Number(req.params.id) });
+  if (!rows.length) return res.status(409).json({ error: 'Already processed' });
   res.json({ ok: true });
 }));
 

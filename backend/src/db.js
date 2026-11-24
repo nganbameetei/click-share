@@ -55,6 +55,17 @@ async function initDb() {
     .split(';')
     .map((s) => s.trim())
     .filter(Boolean);
+  // Older databases: add columns introduced after the first release
+  const added = [
+    ['Users', 'AdBalance', 'REAL NOT NULL DEFAULT 0'],
+    ['Campaigns', 'ReviewStatus', "TEXT NOT NULL DEFAULT 'approved'"],
+    ['Campaigns', 'Budget', 'REAL NOT NULL DEFAULT 0'],
+    ['Campaigns', 'RejectReason', 'TEXT'],
+  ];
+  for (const [table, col, def] of added) {
+    const cols = await query(`SELECT name FROM pragma_table_info('${table}')`);
+    if (cols.length && !cols.some((c) => c.name === col)) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  }
   await client.batch(statements, 'write');
 }
 

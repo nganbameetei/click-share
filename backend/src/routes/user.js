@@ -35,7 +35,7 @@ const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 /* Effective plan: falls back to Free (Id 1) when a paid plan has expired */
 const PLAN_SQL = `
-  SELECT u.Id, u.Name, u.Email, u.Phone, u.Role, u.Balance, u.TotalEarned, u.UpiId, u.CreatedAt,
+  SELECT u.Id, u.Name, u.Email, u.Phone, u.Role, u.Balance, u.AdBalance, u.TotalEarned, u.UpiId, u.CreatedAt,
          u.PlanExpiresAt,
          p.Id AS PlanId, p.Name AS PlanName, p.DailyTaskLimit, p.RewardBonusPct
   FROM Users u
@@ -113,7 +113,8 @@ router.get('/tasks', wrap(async (req, res) => {
             c.UserReward, c.AdvertiserRate, c.TargetCount,
             (SELECT COUNT(*) FROM Submissions s WHERE s.CampaignId=c.Id AND s.Status<>'rejected') AS Taken
      FROM Campaigns c
-     WHERE c.Status='active'
+     WHERE c.Status='active' AND c.ReviewStatus='approved'
+       AND (c.AdvertiserId IS NULL OR c.AdvertiserId<>@uid)
        AND (@platform IS NULL OR c.Platform=@platform)
        AND NOT EXISTS (SELECT 1 FROM Submissions s WHERE s.CampaignId=c.Id AND s.UserId=@uid)
        AND (SELECT COUNT(*) FROM Submissions s WHERE s.CampaignId=c.Id AND s.Status<>'rejected') < c.TargetCount
@@ -136,13 +137,14 @@ router.post('/tasks/:id/submit', upload.single('proof'), wrap(async (req, res) =
   if (!req.file) return res.status(400).json({ error: 'Please upload a screenshot as proof' });
 
   const [c] = await query(
-    `SELECT Id, UserReward, AdvertiserRate, TargetCount, Status,
+    `SELECT Id, AdvertiserId, ReviewStatus, UserReward, AdvertiserRate, TargetCount, Status,
        (SELECT COUNT(*) FROM Submissions s WHERE s.CampaignId=c.Id AND s.Status<>'rejected') AS Taken
      FROM Campaigns c WHERE Id=@id`,
     { id: Number(req.params.id) }
   );
-  if (!c || c.Status !== 'active' || c.Taken >= c.TargetCount)
+  if (!c || c.Status !== 'active' || c.ReviewStatus !== 'approved' || c.Taken >= c.TargetCount)
     return res.status(410).json({ error: 'This task is no longer available' });
+  if (c.AdvertiserId === req.user.id) return res.status(400).json({ error: "You can't do your own task" });
 
   try {
     await query(

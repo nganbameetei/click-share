@@ -19,6 +19,9 @@ Users earn small rewards for liking, following and sharing advertiser posts on F
 | Minimum withdrawal is ₹100 (`MIN_WITHDRAWAL`). The balance is debited when the request is made and refunded if an admin rejects it. | Wallet |
 | Plan payments are manual: the user pays to your UPI and enters the UTR, then an admin verifies it. | Plans / Admin → Plan requests |
 | There is no referral income from joining fees, which keeps the app clear of money-circulation laws. | — |
+| **Users can post their own tasks** (Promote page) at a fixed price per action (`PRICE_SHARE` ₹0.05, `PRICE_LIKE` ₹0.20, `PRICE_FOLLOW` ₹0.50). The cost is paid up front from ad credits first, then earnings. Doers get 40% (+ plan bonus) and the platform keeps the rest. | `backend/src/routes/promote.js` |
+| User-posted tasks go live only after **admin review**. A rejected task, a stopped task's unused slots, and rejected proofs are refunded as ad credits. Users can't do their own tasks. | Admin → Campaigns |
+| **Add funds:** users pay by UPI and enter the UTR, then an admin approves it as **ad credits**. Ad credits can only be spent on promotion and can't be withdrawn, so the app doesn't take withdrawable deposits. A UTR can't be used twice. | Admin → Add funds |
 
 ## Setup
 

@@ -61,13 +61,14 @@ const STATUS = {
   active:    { cls: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30', Icon: CheckCircle2 },
   completed: { cls: 'bg-sky-500/15 text-sky-300 ring-sky-500/30', Icon: CheckCircle2 },
   paused:    { cls: 'bg-slate-500/15 text-slate-300 ring-slate-500/30', Icon: Clock },
+  review:    { cls: 'bg-violet-500/15 text-violet-300 ring-violet-500/30', Icon: Clock, label: 'in review' },
   rejected:  { cls: 'bg-rose-500/15 text-rose-300 ring-rose-500/30', Icon: XCircle },
 };
 export function StatusBadge({ status }) {
   const s = STATUS[status] || STATUS.pending;
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ${s.cls}`}>
-      <s.Icon size={12} /> {status}
+      <s.Icon size={12} /> {s.label || status}
     </span>
   );
 }

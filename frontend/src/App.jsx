@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
-import { LayoutGrid, History as HistoryIcon, Wallet as WalletIcon, Crown, Shield, LogOut } from 'lucide-react';
+import { LayoutGrid, History as HistoryIcon, Wallet as WalletIcon, Crown, Shield, LogOut, Megaphone } from 'lucide-react';
 import { useAuth } from './auth';
 import { Logo, PageLoader } from './ui';
 import { rupee } from './api';
@@ -10,6 +10,7 @@ import History from './pages/History';
 import Wallet from './pages/Wallet';
 import Plans from './pages/Plans';
 import Admin from './pages/Admin';
+import Promote from './pages/Promote';
 
 function Protected({ admin }) {
   const { user, ready } = useAuth();
@@ -24,6 +25,7 @@ function AppShell() {
   const navigate = useNavigate();
   const nav = [
     { to: '/app', label: 'Earn', Icon: LayoutGrid, end: true },
+    { to: '/app/promote', label: 'Promote', Icon: Megaphone },
     { to: '/app/history', label: 'My Tasks', Icon: HistoryIcon },
     { to: '/app/wallet', label: 'Wallet', Icon: WalletIcon },
     { to: '/app/plans', label: 'Plans', Icon: Crown },
@@ -95,6 +97,7 @@ export default function App() {
       <Route path="/signup" element={<Signup />} />
       <Route path="/app" element={<Protected />}>
         <Route index element={<Dashboard />} />
+        <Route path="promote" element={<Promote />} />
         <Route path="history" element={<History />} />
         <Route path="wallet" element={<Wallet />} />
         <Route path="plans" element={<Plans />} />

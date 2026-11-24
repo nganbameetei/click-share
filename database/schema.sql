@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS Users (
   PlanExpiresAt TEXT,
   Balance       REAL    NOT NULL DEFAULT 0,
   TotalEarned   REAL    NOT NULL DEFAULT 0,
+  AdBalance     REAL    NOT NULL DEFAULT 0,   -- money added to promote own posts (not withdrawable)
   UpiId         TEXT,
   IsBlocked     INTEGER NOT NULL DEFAULT 0,
   CreatedAt     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -47,8 +48,22 @@ CREATE TABLE IF NOT EXISTS Campaigns (
   TargetCount     INTEGER NOT NULL,
   CompletedCount  INTEGER NOT NULL DEFAULT 0,
   Status          TEXT    NOT NULL DEFAULT 'active' CHECK (Status IN ('active','paused','completed')),
+  ReviewStatus    TEXT    NOT NULL DEFAULT 'approved',   -- pending | approved | rejected (user-posted tasks)
+  Budget          REAL    NOT NULL DEFAULT 0,            -- amount the poster paid up front
+  RejectReason    TEXT,
   CreatedAt       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   CHECK (UserReward < AdvertiserRate)
+);
+
+-- Money users add (UPI + UTR) to promote their own posts. Credited to AdBalance after admin check.
+CREATE TABLE IF NOT EXISTS Deposits (
+  Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  UserId      INTEGER NOT NULL REFERENCES Users(Id),
+  Amount      REAL    NOT NULL,
+  PaymentRef  TEXT    NOT NULL,
+  Status      TEXT    NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending','approved','rejected')),
+  CreatedAt   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  ProcessedAt TEXT
 );
 
 -- Proof that a user did a task
