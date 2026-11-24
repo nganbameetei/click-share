@@ -29,7 +29,7 @@ function NewTaskForm({ pricing, balance, onCreated, onAddFunds }) {
     setBusy(true);
     try {
       await api('/promote/campaigns', { method: 'POST', body: { ...f, targetCount: count } });
-      toast('Task posted! It goes live after a quick review.');
+      toast(pricing.autoApprove ? 'Task posted and live! Users can see it now.' : 'Task posted! Other users will see it after admin approval.');
       setF(EMPTY);
       onCreated();
     } catch (err) {
@@ -49,8 +49,9 @@ function NewTaskForm({ pricing, balance, onCreated, onAddFunds }) {
         <div className="grid grid-cols-3 gap-2">
           {Object.entries(PLATFORMS).map(([key, p]) => (
             <button type="button" key={key} onClick={() => setF({ ...f, platform: key })}
-              className={`flex items-center gap-2 rounded-xl border p-2.5 text-sm font-semibold transition ${f.platform === key ? 'border-fuchsia-500/60 bg-fuchsia-500/10' : 'border-white/10 bg-white/[0.03] hover:bg-white/5'}`}>
-              <PlatformTile platform={key} size="h-7 w-7" /> <span className="hidden sm:inline">{p.label}</span>
+              className={`flex min-w-0 flex-col items-center gap-1.5 rounded-xl border px-1 py-3 text-xs font-semibold transition ${f.platform === key ? 'border-fuchsia-500/60 bg-fuchsia-500/10 text-white' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/5'}`}>
+              <PlatformTile platform={key} size="h-8 w-8" />
+              <span className="w-full truncate text-center">{p.label}</span>
             </button>
           ))}
         </div>
@@ -62,9 +63,10 @@ function NewTaskForm({ pricing, balance, onCreated, onAddFunds }) {
         <div className="grid grid-cols-3 gap-2">
           {Object.entries(ACTIONS).map(([key, a]) => (
             <button type="button" key={key} onClick={() => setF({ ...f, actionType: key })}
-              className={`rounded-xl border p-2.5 text-left transition ${f.actionType === key ? 'border-fuchsia-500/60 bg-fuchsia-500/10' : 'border-white/10 bg-white/[0.03] hover:bg-white/5'}`}>
-              <div className="flex items-center gap-1.5 text-sm font-semibold"><a.Icon size={15} /> {a.label}</div>
-              <div className="text-xs text-slate-400">{rupee(pricing.prices[key])} each</div>
+              className={`flex min-w-0 flex-col items-center gap-1 rounded-xl border px-1 py-3 text-center transition ${f.actionType === key ? 'border-fuchsia-500/60 bg-fuchsia-500/10 text-white' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/5'}`}>
+              <a.Icon size={18} className="text-fuchsia-300" />
+              <div className="text-xs font-semibold">{a.label}</div>
+              <div className="text-[11px] text-slate-400">{rupee(pricing.prices[key])} each</div>
             </button>
           ))}
         </div>
@@ -209,12 +211,12 @@ export default function Promote() {
         </button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-5">
-        <div className="lg:col-span-2">
+      <div className="grid gap-6 xl:grid-cols-5">
+        <div className="xl:col-span-2">
           <NewTaskForm pricing={pricing} balance={balance} onCreated={load} onAddFunds={() => setFundsOpen(true)} />
         </div>
 
-        <div className="space-y-3 lg:col-span-3">
+        <div className="space-y-3 xl:col-span-3">
           <h2 className="flex items-center gap-2 font-bold"><Megaphone size={18} className="text-fuchsia-300" /> My posted tasks</h2>
           {mine.length === 0 ? (
             <Empty icon={Megaphone} title="No tasks posted yet" text="Post your first task and real users will start liking, following or sharing." />
@@ -232,6 +234,7 @@ export default function Promote() {
                     </div>
                     <div className="text-xs text-slate-500">{ACTIONS[c.ActionType].label} · {rupee(c.Price)} each · paid {rupee(c.Budget)} · {timeAgo(c.CreatedAt)}</div>
                     {c.RejectReason && <div className="mt-1 text-xs text-rose-300">{c.RejectReason}</div>}
+                    {st === 'review' && <div className="mt-1.5 rounded-lg bg-violet-500/10 px-2.5 py-1.5 text-xs text-violet-200">⏳ Waiting for admin approval. Other users will see this task once it's approved.</div>}
                   </div>
                 </div>
                 <div className="mt-3 flex items-center gap-3">

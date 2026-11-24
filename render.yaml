@@ -37,6 +37,8 @@ services:
         value: "0.4"
       - key: MAX_REWARD_SHARE
         value: "0.8"
+      - key: AUTO_APPROVE_USER_TASKS # true = user tasks go live without admin approval
+        value: "false"
       - key: SEED_DEMO
         value: "false"
     # Proof screenshots are saved to backend/data/uploads. On the free plan that

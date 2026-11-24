@@ -9,6 +9,8 @@ const SHARE = Number(process.env.USER_REWARD_SHARE || 0.4);
 const MIN_TARGET = Number(process.env.MIN_TASK_TARGET || 10);
 const MAX_TARGET = 10000;
 const MIN_DEPOSIT = Number(process.env.MIN_DEPOSIT || 50);
+// true = user-posted tasks go live immediately; false = admin must approve first
+const AUTO_APPROVE = process.env.AUTO_APPROVE_USER_TASKS === 'true';
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const PLATFORM_HOSTS = {
@@ -21,7 +23,7 @@ router.use(requireAuth);
 
 router.get('/pricing', (_req, res) => res.json({
   prices: PRICES, minTarget: MIN_TARGET, maxTarget: MAX_TARGET, minDeposit: MIN_DEPOSIT,
-  paymentUpiId: process.env.PAYMENT_UPI_ID || null,
+  paymentUpiId: process.env.PAYMENT_UPI_ID || null, autoApprove: AUTO_APPROVE,
 }));
 
 router.get('/campaigns', wrap(async (req, res) => {
@@ -60,8 +62,8 @@ router.post('/campaigns', wrap(async (req, res) => {
     const [c] = await q(
       `INSERT INTO Campaigns (AdvertiserId, Title, Description, Platform, ActionType, TargetUrl, AdvertiserRate, UserReward,
                               TargetCount, Status, ReviewStatus, Budget)
-       VALUES (@uid, @title, @desc, @platform, @action, @url, @rate, @reward, @count, 'paused', 'pending', @cost) RETURNING Id`,
-      { uid: req.user.id, title, desc: (b.description || '').trim().slice(0, 300) || null, platform: b.platform,
+       VALUES (@uid, @title, @desc, @platform, @action, @url, @rate, @reward, @count, @status, @review, @cost) RETURNING Id`,
+      { uid: req.user.id, title, status: AUTO_APPROVE ? 'active' : 'paused', review: AUTO_APPROVE ? 'approved' : 'pending', desc: (b.description || '').trim().slice(0, 300) || null, platform: b.platform,
         action: b.actionType, url: url.toString(), rate, reward, count, cost });
     const parts = [fromAd > 0 && `₹${fromAd.toFixed(2)} ad credits`, fromEarn > 0 && `₹${fromEarn.toFixed(2)} earnings`].filter(Boolean).join(' + ');
     await q(`INSERT INTO WalletTransactions (UserId, Amount, Type, Source, RefId, Note)

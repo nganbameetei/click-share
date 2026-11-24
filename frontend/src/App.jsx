@@ -1,8 +1,9 @@
-import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutGrid, History as HistoryIcon, Wallet as WalletIcon, Crown, Shield, LogOut, Megaphone, Gift } from 'lucide-react';
 import { useAuth } from './auth';
 import { Logo, PageLoader } from './ui';
-import { rupee } from './api';
+import { api, rupee } from './api';
 import Landing from './pages/Landing';
 import { Login, Signup } from './pages/Auth';
 import Dashboard from './pages/Dashboard';
@@ -21,9 +22,24 @@ function Protected({ admin }) {
   return <AppShell />;
 }
 
+/** Admins: number of things waiting for them (proofs, user tasks, payments). */
+function useAdminPending(isAdmin) {
+  const { pathname } = useLocation();
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!isAdmin) return;
+    api('/admin/stats')
+      .then((s) => setN(s.PendingSubmissions + s.PendingReviews + s.PendingDeposits + s.PendingWithdrawals + s.PendingPlans))
+      .catch(() => {});
+  }, [isAdmin, pathname]);
+  return n;
+}
+
 function AppShell() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const pending = useAdminPending(user.Role === 'admin');
+  const badge = (to) => (to === '/admin' && pending > 0 ? pending : 0);
   const nav = [
     { to: '/app', label: 'Earn', Icon: LayoutGrid, end: true },
     { to: '/app/promote', label: 'Promote', Icon: Megaphone },
@@ -45,7 +61,10 @@ function AppShell() {
         <Logo className="mb-8 px-1" />
         <nav className="flex flex-1 flex-col gap-1">
           {nav.map(({ to, label, Icon, end }) => (
-            <NavLink key={to} to={to} end={end} className={linkCls}><Icon size={18} /> {label}</NavLink>
+            <NavLink key={to} to={to} end={end} className={linkCls}>
+              <Icon size={18} /> {label}
+              {badge(to) > 0 && <span className="ml-auto rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-bold text-ink-950">{badge(to)}</span>}
+            </NavLink>
           ))}
         </nav>
         <div className="card p-4">
@@ -81,8 +100,9 @@ function AppShell() {
              style={{ gridTemplateColumns: `repeat(${nav.filter((n) => !n.desktopOnly).length}, minmax(0, 1fr))` }}>
           {nav.filter((n) => !n.desktopOnly).map(({ to, label, Icon, end }) => (
             <NavLink key={to} to={to} end={end}
-              className={({ isActive }) => `flex flex-col items-center gap-1 py-2.5 text-[11px] font-semibold ${isActive ? 'text-fuchsia-300' : 'text-slate-500'}`}>
+              className={({ isActive }) => `relative flex flex-col items-center gap-1 py-2.5 text-[11px] font-semibold ${isActive ? 'text-fuchsia-300' : 'text-slate-500'}`}>
               <Icon size={20} /> {label}
+              {badge(to) > 0 && <span className="absolute right-1/2 top-1 translate-x-5 rounded-full bg-amber-400 px-1.5 text-[10px] font-bold leading-4 text-ink-950">{badge(to)}</span>}
             </NavLink>
           ))}
         </nav>
