@@ -1,14 +1,14 @@
-/* Creates the admin + demo accounts and sample campaigns (local development only). */
+/* Creates the admin account (and, with SEED_DEMO=true, a demo user + sample campaigns). Safe to re-run. */
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
-const { query, getPool } = require('../src/db');
+const { query, initDb, client } = require('../src/db');
 
 async function upsertUser(name, email, password, role) {
   const [u] = await query('SELECT Id FROM Users WHERE Email=@email', { email });
   if (u) return u.Id;
   const hash = await bcrypt.hash(password, 10);
   const [n] = await query(
-    'INSERT INTO Users (Name, Email, PasswordHash, Role) OUTPUT INSERTED.Id VALUES (@name, @email, @hash, @role)',
+    'INSERT INTO Users (Name, Email, PasswordHash, Role) VALUES (@name, @email, @hash, @role) RETURNING Id',
     { name, email, hash, role });
   return n.Id;
 }
@@ -23,6 +23,7 @@ const samples = [
 ];
 
 (async () => {
+  await initDb();
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD)
     await upsertUser('Admin', process.env.ADMIN_EMAIL, process.env.ADMIN_PASSWORD, 'admin');
   // Demo user + sample campaigns only when SEED_DEMO=true (local development)
@@ -39,5 +40,5 @@ const samples = [
     }
   }
   console.log('Seed complete.');
-  (await getPool()).close();
+  client.close();
 })().catch((e) => { console.error(e); process.exit(1); });

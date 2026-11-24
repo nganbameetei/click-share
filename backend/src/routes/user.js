@@ -3,7 +3,8 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
-const { query, tx } = require('../db');
+const { query, tx, NOW } = require('../db');
+const { UPLOAD_DIR } = require('../paths');
 const { sign, requireAuth } = require('../auth');
 
 const router = express.Router();
@@ -22,7 +23,7 @@ function rewardFor(base, advertiserRate, bonusPct) {
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination: path.join(__dirname, '..', '..', 'uploads'),
+    destination: UPLOAD_DIR,
     filename: (_req, file, cb) =>
       cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname).toLowerCase()}`),
   }),
@@ -38,7 +39,7 @@ const PLAN_SQL = `
          u.PlanExpiresAt,
          p.Id AS PlanId, p.Name AS PlanName, p.DailyTaskLimit, p.RewardBonusPct
   FROM Users u
-  JOIN Plans p ON p.Id = CASE WHEN u.PlanExpiresAt IS NULL OR u.PlanExpiresAt > SYSUTCDATETIME()
+  JOIN Plans p ON p.Id = CASE WHEN u.PlanExpiresAt IS NULL OR u.PlanExpiresAt > ${NOW}
                               THEN u.PlanId ELSE 1 END
   WHERE u.Id = @id`;
 
@@ -47,8 +48,8 @@ async function loadMe(id) {
   const [stats] = await query(
     `SELECT
        (SELECT COUNT(*) FROM Submissions WHERE UserId=@id
-          AND CreatedAt >= CAST(CAST(SYSUTCDATETIME() AS DATE) AS DATETIME2)) AS TodayCount,
-       (SELECT ISNULL(SUM(Reward),0) FROM Submissions WHERE UserId=@id AND Status='pending') AS PendingEarning,
+          AND CreatedAt >= strftime('%Y-%m-%dT00:00:00.000Z','now')) AS TodayCount,
+       (SELECT IFNULL(SUM(Reward),0) FROM Submissions WHERE UserId=@id AND Status='pending') AS PendingEarning,
        (SELECT COUNT(*) FROM Submissions WHERE UserId=@id AND Status='approved') AS ApprovedCount`,
     { id }
   );
@@ -64,8 +65,8 @@ router.post('/auth/signup', wrap(async (req, res) => {
   if (exists) return res.status(409).json({ error: 'This email is already registered' });
   const hash = await bcrypt.hash(password, 10);
   const [user] = await query(
-    `INSERT INTO Users (Name, Email, Phone, PasswordHash) OUTPUT INSERTED.Id, INSERTED.Role
-     VALUES (@name, @email, @phone, @hash)`,
+    `INSERT INTO Users (Name, Email, Phone, PasswordHash)
+     VALUES (@name, @email, @phone, @hash) RETURNING Id, Role`,
     { name: name.trim(), email: email.toLowerCase().trim(), phone: phone || null, hash }
   );
   res.json({ token: sign(user), user: await loadMe(user.Id) });
@@ -98,7 +99,7 @@ router.get('/me', wrap(async (req, res) => res.json(await loadMe(req.user.id))))
 
 router.put('/me', wrap(async (req, res) => {
   const { name, phone, upiId } = req.body || {};
-  await query('UPDATE Users SET Name=ISNULL(@name,Name), Phone=@phone, UpiId=@upiId WHERE Id=@id', {
+  await query('UPDATE Users SET Name=IFNULL(@name,Name), Phone=@phone, UpiId=@upiId WHERE Id=@id', {
     id: req.user.id, name: name || null, phone: phone || null, upiId: upiId || null,
   });
   res.json(await loadMe(req.user.id));
@@ -150,7 +151,7 @@ router.post('/tasks/:id/submit', upload.single('proof'), wrap(async (req, res) =
       { cid: c.Id, uid: req.user.id, img: `/uploads/${req.file.filename}`, handle: req.body.handle || null, reward: rewardFor(c.UserReward, c.AdvertiserRate, me.RewardBonusPct) }
     );
   } catch (e) {
-    if (/UQ_Submission/.test(e.message)) return res.status(409).json({ error: 'You already did this task' });
+    if (/UNIQUE/.test(e.message)) return res.status(409).json({ error: 'You already did this task' });
     throw e;
   }
   res.json({ ok: true, me: await loadMe(req.user.id) });
@@ -158,9 +159,9 @@ router.post('/tasks/:id/submit', upload.single('proof'), wrap(async (req, res) =
 
 router.get('/submissions', wrap(async (req, res) => {
   res.json(await query(
-    `SELECT TOP 200 s.Id, s.Status, s.Reward, s.RejectReason, s.CreatedAt, c.Title, c.Platform, c.ActionType
+    `SELECT s.Id, s.Status, s.Reward, s.RejectReason, s.CreatedAt, c.Title, c.Platform, c.ActionType
      FROM Submissions s JOIN Campaigns c ON c.Id=s.CampaignId
-     WHERE s.UserId=@uid ORDER BY s.CreatedAt DESC`,
+     WHERE s.UserId=@uid ORDER BY s.CreatedAt DESC LIMIT 200`,
     { uid: req.user.id }
   ));
 }));
@@ -168,8 +169,8 @@ router.get('/submissions', wrap(async (req, res) => {
 /* ---------------- Wallet ---------------- */
 router.get('/wallet', wrap(async (req, res) => {
   const [transactions, withdrawals] = await Promise.all([
-    query('SELECT TOP 100 * FROM WalletTransactions WHERE UserId=@uid ORDER BY CreatedAt DESC', { uid: req.user.id }),
-    query('SELECT TOP 50 * FROM Withdrawals WHERE UserId=@uid ORDER BY CreatedAt DESC', { uid: req.user.id }),
+    query('SELECT * FROM WalletTransactions WHERE UserId=@uid ORDER BY Id DESC LIMIT 100', { uid: req.user.id }),
+    query('SELECT * FROM Withdrawals WHERE UserId=@uid ORDER BY Id DESC LIMIT 50', { uid: req.user.id }),
   ]);
   res.json({ me: await loadMe(req.user.id), transactions, withdrawals });
 }));
@@ -181,11 +182,11 @@ router.post('/wallet/withdraw', wrap(async (req, res) => {
   if (!(amount >= MIN_WITHDRAWAL)) return res.status(400).json({ error: `Minimum withdrawal is ₹${MIN_WITHDRAWAL}` });
 
   const result = await tx(async (q) => {
-    const [u] = await q('UPDATE Users SET Balance=Balance-@amt, UpiId=@upi OUTPUT INSERTED.Balance WHERE Id=@uid AND Balance>=@amt',
+    const [u] = await q('UPDATE Users SET Balance=ROUND(Balance-@amt, 4), UpiId=@upi WHERE Id=@uid AND Balance>=@amt RETURNING Balance',
       { uid: req.user.id, amt: amount, upi: upiId });
     if (!u) return null;
-    const [w] = await q(`INSERT INTO Withdrawals (UserId, Amount, Fee, UpiId) OUTPUT INSERTED.Id
-                         VALUES (@uid, @amt, @fee, @upi)`, { uid: req.user.id, amt: amount, fee: WITHDRAWAL_FEE, upi: upiId });
+    const [w] = await q(`INSERT INTO Withdrawals (UserId, Amount, Fee, UpiId)
+                         VALUES (@uid, @amt, @fee, @upi) RETURNING Id`, { uid: req.user.id, amt: amount, fee: WITHDRAWAL_FEE, upi: upiId });
     await q(`INSERT INTO WalletTransactions (UserId, Amount, Type, Source, RefId, Note)
              VALUES (@uid, @amt, 'debit', 'withdrawal', @ref, @note)`,
       { uid: req.user.id, amt: amount, ref: w.Id, note: `Withdrawal to ${upiId}` });

@@ -1,57 +1,61 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const { createClient } = require('@libsql/client');
 
-const trusted = process.env.DB_TRUSTED === 'true';
-const sql = trusted ? require('mssql/msnodesqlv8') : require('mssql');
-
-const config = trusted
-  ? {
-      connectionString:
-        `Driver={${process.env.DB_ODBC_DRIVER || 'ODBC Driver 17 for SQL Server'}};` +
-        `Server=${process.env.DB_SERVER};Database=${process.env.DB_DATABASE};Trusted_Connection=yes;`,
-    }
-  : {
-      server: process.env.DB_SERVER,
-      port: Number(process.env.DB_PORT || 1433),
-      database: process.env.DB_DATABASE,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      // Azure SQL / most hosted MSSQL need DB_ENCRYPT=true
-      options: { encrypt: process.env.DB_ENCRYPT === 'true', trustServerCertificate: process.env.DB_ENCRYPT !== 'true' },
-    };
-
-let poolPromise;
-function getPool() {
-  if (!poolPromise) poolPromise = new sql.ConnectionPool(config).connect();
-  return poolPromise;
+// Production (free hosting): a Turso cloud database via TURSO_DATABASE_URL + TURSO_AUTH_TOKEN.
+// Local / VPS / disk: a plain SQLite file at DB_FILE (default backend/data/clickshare.db).
+function connect() {
+  if (process.env.TURSO_DATABASE_URL) {
+    return createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
+  }
+  const file = path.resolve(process.env.DB_FILE || path.join(__dirname, '..', 'data', 'clickshare.db'));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  return createClient({ url: `file:${file.replace(/\\/g, '/')}` });
 }
 
-function bind(request, params = {}) {
-  for (const [k, v] of Object.entries(params)) request.input(k, v);
-  return request;
-}
+const client = connect();
+
+/** Current UTC time as an ISO string, for use inside SQL. */
+const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+
+// libSQL rejects undefined/boolean values: normalise them
+const clean = (params = {}) =>
+  Object.fromEntries(Object.entries(params).map(([k, v]) =>
+    [k, v === undefined ? null : typeof v === 'boolean' ? Number(v) : v]));
+
+const toObjects = (rs) => rs.rows.map((r) => Object.fromEntries(rs.columns.map((c, i) => [c, r[i]])));
 
 /** Run a parameterised query: query('SELECT * FROM Users WHERE Id=@id', { id }) */
-async function query(text, params) {
-  const pool = await getPool();
-  const result = await bind(pool.request(), params).query(text);
-  return result.recordset || [];
+async function query(sql, params) {
+  return toObjects(await client.execute({ sql, args: clean(params) }));
 }
 
 /** Run several statements atomically: tx(async (q) => { await q('...', {...}) }) */
 async function tx(work) {
-  const pool = await getPool();
-  const t = new sql.Transaction(pool);
-  await t.begin();
+  const t = await client.transaction('write');
   try {
-    const q = async (text, params) =>
-      (await bind(new sql.Request(t), params).query(text)).recordset || [];
+    const q = async (sql, params) => toObjects(await t.execute({ sql, args: clean(params) }));
     const out = await work(q);
     await t.commit();
     return out;
   } catch (err) {
     await t.rollback().catch(() => {});
     throw err;
+  } finally {
+    t.close();
   }
 }
 
-module.exports = { sql, query, tx, getPool };
+/** Create tables + seed plans (idempotent). */
+async function initDb() {
+  const schema = fs.readFileSync(path.join(__dirname, '..', '..', 'database', 'schema.sql'), 'utf8');
+  const statements = schema
+    .replace(/--.*$/gm, '')
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  await client.batch(statements, 'write');
+}
+
+module.exports = { query, tx, initDb, client, NOW };

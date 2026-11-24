@@ -2,9 +2,9 @@
 
 Users earn small rewards for liking, following and sharing advertiser posts on Facebook, Instagram and YouTube.
 
-- **Backend:** Node.js + Express + MSSQL (`backend/`)
+- **Backend:** Node.js + Express (`backend/`)
+- **Database:** SQLite via libSQL: a local file in development, a free [Turso](https://turso.tech) database in production. The schema is in `database/schema.sql` and is applied automatically on start.
 - **Frontend:** React + Vite + Tailwind CSS (`frontend/`)
-- **Database:** `database/schema.sql`
 
 ## Business rules built in
 
@@ -22,20 +22,23 @@ Users earn small rewards for liking, following and sharing advertiser posts on F
 
 ## Setup
 
-1. Create the database (Windows auth, SQL Server Express):
-   ```powershell
-   sqlcmd -S .\SQLEXPRESS -E -i database\schema.sql
-   ```
-2. Backend:
+1. Backend (creates `backend/data/clickshare.db` automatically):
    ```powershell
    cd backend; copy .env.example .env; npm install; npm run seed; npm start
    ```
-   For SQL authentication instead of Windows authentication, set `DB_TRUSTED=false` and fill in `DB_USER`, `DB_PASSWORD` and `DB_PORT` (TCP/IP must be enabled on the instance).
-3. Frontend (in a second terminal):
+2. Frontend (in a second terminal):
    ```powershell
    cd frontend; npm install; npm run dev
    ```
-4. Open http://localhost:5173
+3. Open http://localhost:5173
+
+## Deploy free: Render + Turso
+
+1. **Turso:** sign up at https://turso.tech with GitHub. Create a database (e.g. `clickshare`) in the Mumbai or Singapore region. Copy its **URL** (`libsql://…turso.io`), then **Create Token** (read & write) and copy the token.
+2. **Render:** New → Blueprint, then pick this repo. Fill in `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `PAYMENT_UPI_ID`, then click Deploy.
+3. On first start the app creates the tables, the plans and the admin account in Turso.
+
+On Render's free plan, uploaded proof screenshots are deleted on every restart or deploy (the Turso database is safe). For real users, add a disk (see `render.yaml`).
 
 The seed creates local test accounts using the `ADMIN_*` and `DEMO_*` values in `backend/.env`. **Change them, and `JWT_SECRET`, before deploying.**
 

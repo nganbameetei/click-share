@@ -1,38 +1,31 @@
-# Render Blueprint: one web service that serves the React app + API.
-# Render does not host MSSQL - point DB_* at a hosted SQL Server (e.g. Azure SQL).
+# Render Blueprint: free web service running the API + website.
+# Database lives on Turso (free) because Render's free plan has no persistent disk.
 services:
   - type: web
     name: clickshare
     runtime: node
     plan: free
+    region: singapore
     buildCommand: >-
-      npm --prefix backend install --omit=optional &&
-      npm --prefix frontend install --include=dev &&
+      npm --prefix backend ci &&
+      npm --prefix frontend ci --include=dev &&
       npm --prefix frontend run build
     startCommand: npm --prefix backend run start:prod
     healthCheckPath: /api/health
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: NODE_VERSION
         value: "22"
       - key: JWT_SECRET
         generateValue: true
-      - key: DB_TRUSTED
-        value: "false"
-      - key: DB_ENCRYPT
-        value: "true"
-      - key: DB_SERVER
+      - key: TURSO_DATABASE_URL
         sync: false
-      - key: DB_PORT
-        value: "1433"
-      - key: DB_DATABASE
-        sync: false
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
+      - key: TURSO_AUTH_TOKEN
         sync: false
       - key: ADMIN_EMAIL
         sync: false
-      - key: ADMIN_PASSWORD
+      - key: ADMIN_PASSWORD # strong password, 12+ characters
         sync: false
       - key: PAYMENT_UPI_ID
         sync: false
@@ -46,9 +39,10 @@ services:
         value: "0.8"
       - key: SEED_DEMO
         value: "false"
-    # Proof screenshots are saved to backend/uploads. On the free plan that folder
-    # is wiped on every deploy/restart. For production, upgrade the plan and add:
+    # Proof screenshots are saved to backend/data/uploads. On the free plan that
+    # folder is wiped on every deploy/restart (the database on Turso is safe).
+    # For production, upgrade the plan and add a disk:
     # disk:
     #   name: uploads
-    #   mountPath: /opt/render/project/src/backend/uploads
+    #   mountPath: /opt/render/project/src/backend/data/uploads
     #   sizeGB: 1
