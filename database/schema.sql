@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS Users (
   Balance       REAL    NOT NULL DEFAULT 0,
   TotalEarned   REAL    NOT NULL DEFAULT 0,
   AdBalance     REAL    NOT NULL DEFAULT 0,   -- money added to promote own posts (not withdrawable)
+  ReferralCode  TEXT,                         -- this user's invite code (unique index below)
+  ReferredBy    INTEGER REFERENCES Users(Id), -- who invited this user
+  ReferralBonusPaid INTEGER NOT NULL DEFAULT 0, -- joining bonus already paid for this user
   UpiId         TEXT,
   IsBlocked     INTEGER NOT NULL DEFAULT 0,
   CreatedAt     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -124,6 +127,8 @@ CREATE INDEX IF NOT EXISTS IX_Submissions_User_Date ON Submissions(UserId, Creat
 CREATE INDEX IF NOT EXISTS IX_Submissions_Status    ON Submissions(Status);
 CREATE INDEX IF NOT EXISTS IX_Campaigns_Status      ON Campaigns(Status, Platform);
 CREATE INDEX IF NOT EXISTS IX_Wallet_User           ON WalletTransactions(UserId, CreatedAt);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_Users_RefCode  ON Users(ReferralCode);
+CREATE INDEX IF NOT EXISTS IX_Users_ReferredBy      ON Users(ReferredBy);
 
 INSERT OR IGNORE INTO Plans (Id, Name, Price, DailyTaskLimit, DurationDays, Badge, SortOrder, RewardBonusPct) VALUES
   (1, 'Free',       0,  10, 36500, NULL,           1,  0),

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { query, tx, NOW } = require('../db');
 const { UPLOAD_DIR } = require('../paths');
 const { sign, requireAuth } = require('../auth');
+const { REFERRAL, newReferralCode } = require('../referral');
 
 const router = express.Router();
 const MIN_WITHDRAWAL = Number(process.env.MIN_WITHDRAWAL || 100);
@@ -57,19 +58,41 @@ async function loadMe(id) {
 }
 
 /* ---------------- Auth ---------------- */
+async function findInviter(code) {
+  const c = (code || '').trim().toUpperCase();
+  if (!c) return null;
+  const [r] = await query('SELECT Id, Name FROM Users WHERE ReferralCode=@c AND IsBlocked=0', { c });
+  return r || null;
+}
+
 router.post('/auth/signup', wrap(async (req, res) => {
-  const { name, email, phone, password } = req.body || {};
+  const { name, email, phone, password, ref } = req.body || {};
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
   const [exists] = await query('SELECT Id FROM Users WHERE Email=@email', { email: email.toLowerCase() });
   if (exists) return res.status(409).json({ error: 'This email is already registered' });
+  const inviter = await findInviter(ref);
+  if (ref && !inviter) return res.status(400).json({ error: 'That referral code is not valid' });
   const hash = await bcrypt.hash(password, 10);
-  const [user] = await query(
-    `INSERT INTO Users (Name, Email, Phone, PasswordHash)
-     VALUES (@name, @email, @phone, @hash) RETURNING Id, Role`,
-    { name: name.trim(), email: email.toLowerCase().trim(), phone: phone || null, hash }
-  );
+  let user;
+  for (let i = 0; !user && i < 5; i++) {
+    try {
+      [user] = await query(
+        `INSERT INTO Users (Name, Email, Phone, PasswordHash, ReferralCode, ReferredBy)
+         VALUES (@name, @email, @phone, @hash, @code, @by) RETURNING Id, Role`,
+        { name: name.trim(), email: email.toLowerCase().trim(), phone: phone || null, hash, code: newReferralCode(), by: inviter?.Id ?? null });
+    } catch (e) {
+      if (!/IX_Users_RefCode|ReferralCode/.test(e.message)) throw e; // code collision: try another
+    }
+  }
   res.json({ token: sign(user), user: await loadMe(user.Id) });
+}));
+
+/** Public: who owns a referral code (first name only), for the signup page. */
+router.get('/referral/:code', wrap(async (req, res) => {
+  const r = await findInviter(req.params.code);
+  if (!r) return res.status(404).json({ error: 'Invalid referral code' });
+  res.json({ name: r.Name.split(' ')[0], friendBonus: REFERRAL.friendBonus, minTasks: REFERRAL.minTasks });
 }));
 
 router.post('/auth/login', wrap(async (req, res) => {
@@ -96,6 +119,34 @@ router.get('/plans', wrap(async (_req, res) => {
 router.use(requireAuth);
 
 router.get('/me', wrap(async (req, res) => res.json(await loadMe(req.user.id))));
+
+/** Refer & Earn: my code, settings, totals and invited friends. */
+router.get('/referrals', wrap(async (req, res) => {
+  const uid = req.user.id;
+  const [[me], friends, [earned]] = await Promise.all([
+    query('SELECT ReferralCode FROM Users WHERE Id=@uid', { uid }),
+    query(
+      `SELECT f.Id, f.Name, f.CreatedAt, f.ReferralBonusPaid,
+              (SELECT COUNT(*) FROM Submissions s WHERE s.UserId=f.Id AND s.Status='approved') AS Approved,
+              (SELECT IFNULL(SUM(w.Amount),0) FROM WalletTransactions w JOIN Submissions s ON s.Id=w.RefId
+                 WHERE w.UserId=@uid AND w.Source='referral' AND s.UserId=f.Id) AS FromTasks
+       FROM Users f WHERE f.ReferredBy=@uid ORDER BY f.Id DESC LIMIT 200`, { uid }),
+    query(`SELECT IFNULL(SUM(CASE WHEN Source='referral' THEN Amount END),0) AS Tasks,
+                  IFNULL(SUM(CASE WHEN Source='referral_bonus' THEN Amount END),0) AS Bonus
+           FROM WalletTransactions WHERE UserId=@uid AND Type='credit'`, { uid }),
+  ]);
+  res.json({
+    code: me.ReferralCode,
+    settings: REFERRAL,
+    earned: { tasks: earned.Tasks, bonus: earned.Bonus, total: earned.Tasks + earned.Bonus },
+    friends: friends.map((f) => {
+      const [first, ...rest] = f.Name.split(' ');
+      const bonus = f.ReferralBonusPaid ? REFERRAL.inviterBonus : 0;
+      return { Id: f.Id, Name: first + (rest.length ? ` ${rest[rest.length - 1][0]}.` : ''), CreatedAt: f.CreatedAt,
+        Approved: f.Approved, Qualified: !!f.ReferralBonusPaid, Earned: f.FromTasks + bonus };
+    }),
+  });
+}));
 
 router.put('/me', wrap(async (req, res) => {
   const { name, phone, upiId } = req.body || {};

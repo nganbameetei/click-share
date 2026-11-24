@@ -1,7 +1,8 @@
 const express = require('express');
 const { query, tx, NOW } = require('../db');
 const { requireAuth, requireAdmin } = require('../auth');
-const { creditAd } = require('../wallet');
+const { creditAd, round } = require('../wallet');
+const { onTaskApproved } = require('../referral');
 
 const router = express.Router();
 const SHARE = Number(process.env.USER_REWARD_SHARE || 0.4);
@@ -23,6 +24,9 @@ router.get('/stats', wrap(async (_req, res) => {
       (SELECT COUNT(*) FROM Deposits WHERE Status='pending') AS PendingDeposits,
       (SELECT IFNULL(SUM(Amount),0) FROM Deposits WHERE Status='approved') AS Deposited,
       (SELECT IFNULL(SUM(AdBalance),0) FROM Users) AS AdCredits,
+      (SELECT COUNT(*) FROM Users WHERE ReferredBy IS NOT NULL) AS ReferredUsers,
+      (SELECT IFNULL(SUM(Amount),0) FROM WalletTransactions WHERE Source IN ('referral','referral_bonus')) AS ReferralPaid,
+      (SELECT IFNULL(SUM(CASE WHEN Type='credit' THEN Amount ELSE -Amount END),0) FROM WalletTransactions WHERE Source='admin') AS AdminCredits,
       (SELECT IFNULL(SUM(c.AdvertiserRate),0) FROM Submissions s JOIN Campaigns c ON c.Id=s.CampaignId WHERE s.Status='approved') AS AdvertiserRevenue,
       (SELECT IFNULL(SUM(s.Reward),0) FROM Submissions s WHERE s.Status='approved') AS UserPayouts,
       (SELECT IFNULL(SUM(Amount),0) FROM PlanPurchases WHERE Status='approved') AS PlanRevenue,
@@ -53,6 +57,7 @@ router.post('/submissions/:id/approve', wrap(async (req, res) => {
     await q(`UPDATE Campaigns SET CompletedCount=CompletedCount+1,
                Status=CASE WHEN CompletedCount+1>=TargetCount THEN 'completed' ELSE Status END
              WHERE Id=@cid`, { cid: s.CampaignId });
+    await onTaskApproved(q, s.UserId, s.Reward, Number(req.params.id));
     return true;
   });
   if (!ok) return res.status(409).json({ error: 'Already reviewed' });
@@ -239,11 +244,12 @@ router.post('/purchases/:id/reject', wrap(async (req, res) => {
 router.get('/users', wrap(async (req, res) => {
   const search = `%${req.query.q || ''}%`;
   res.json(await query(
-    `SELECT u.Id, u.Name, u.Email, u.Phone, u.Role, u.Balance, u.TotalEarned, u.IsBlocked, u.CreatedAt,
-            u.PlanId, u.PlanExpiresAt, p.Name AS PlanName,
+    `SELECT u.Id, u.Name, u.Email, u.Phone, u.Role, u.Balance, u.AdBalance, u.TotalEarned, u.IsBlocked, u.CreatedAt,
+            u.PlanId, u.PlanExpiresAt, p.Name AS PlanName, u.ReferralCode, r.Name AS ReferredByName,
+            (SELECT COUNT(*) FROM Users f WHERE f.ReferredBy=u.Id) AS Referrals,
             CASE WHEN u.PlanId>1 AND u.PlanExpiresAt IS NOT NULL AND u.PlanExpiresAt <= ${NOW} THEN 1 ELSE 0 END AS PlanExpired
-     FROM Users u JOIN Plans p ON p.Id=u.PlanId
-     WHERE u.Name LIKE @q OR u.Email LIKE @q ORDER BY u.CreatedAt DESC LIMIT 200`, { q: search }));
+     FROM Users u JOIN Plans p ON p.Id=u.PlanId LEFT JOIN Users r ON r.Id=u.ReferredBy
+     WHERE u.Name LIKE @q OR u.Email LIKE @q OR u.ReferralCode LIKE @q ORDER BY u.CreatedAt DESC LIMIT 200`, { q: search }));
 }));
 
 /** Plan history for one user (purchases + admin changes). */
@@ -287,6 +293,47 @@ router.post('/users/:id/plan', wrap(async (req, res) => {
       { uid, pid: plan.Id, amount, remark, admin: req.user.id, exp: expires });
   });
   res.json({ ok: true, plan: plan.Name, expiresAt: expires });
+}));
+
+/**
+ * Admin adds or deducts money on a user's wallet, with a required remark.
+ * wallet: 'earnings' (Balance, withdrawable) or 'ad' (AdBalance, promotion only).
+ */
+router.post('/users/:id/credit', wrap(async (req, res) => {
+  const uid = Number(req.params.id);
+  const b = req.body || {};
+  const wallet = b.wallet === 'ad' ? 'ad' : b.wallet === 'earnings' ? 'earnings' : null;
+  const type = b.type === 'deduct' ? 'debit' : b.type === 'add' ? 'credit' : null;
+  const amount = round(Number(b.amount), 2);
+  const remark = (b.remark || '').trim();
+  if (!wallet || !type) return res.status(400).json({ error: 'Choose the wallet and add or deduct' });
+  if (!(amount > 0 && amount <= 100000)) return res.status(400).json({ error: 'Amount must be between ₹0.01 and ₹1,00,000' });
+  if (remark.length < 2) return res.status(400).json({ error: 'Add a remark, e.g. "Contest prize" or "Wrong payout"' });
+  const col = wallet === 'ad' ? 'AdBalance' : 'Balance';
+  const sign = type === 'credit' ? '+' : '-';
+
+  const result = await tx(async (q) => {
+    const [u] = await q(
+      `UPDATE Users SET ${col}=ROUND(${col}${sign}@a, 4) WHERE Id=@uid ${type === 'debit' ? `AND ${col}>=@a` : ''}
+       RETURNING Balance, AdBalance`, { a: amount, uid });
+    if (!u) return null;
+    await q(`INSERT INTO WalletTransactions (UserId, Amount, Type, Source, RefId, Note)
+             VALUES (@uid, @a, @type, 'admin', @admin, @note)`,
+      { uid, a: amount, type, admin: req.user.id, note: `${wallet === 'ad' ? 'Ad credits' : 'Admin'} ${type === 'credit' ? 'added' : 'deducted'}: ${remark}` });
+    return u;
+  });
+  if (!result) {
+    const [exists] = await query('SELECT Id FROM Users WHERE Id=@uid', { uid });
+    return res.status(exists ? 400 : 404).json({ error: exists ? 'Not enough balance to deduct that amount' : 'User not found' });
+  }
+  res.json({ ok: true, balance: result.Balance, adBalance: result.AdBalance });
+}));
+
+/** Recent admin credits/deductions for one user. */
+router.get('/users/:id/credits', wrap(async (req, res) => {
+  res.json(await query(
+    `SELECT w.*, a.Name AS AdminName FROM WalletTransactions w LEFT JOIN Users a ON a.Id=w.RefId
+     WHERE w.UserId=@uid AND w.Source='admin' ORDER BY w.Id DESC LIMIT 50`, { uid: Number(req.params.id) }));
 }));
 
 router.post('/users/:id/block', wrap(async (req, res) => {

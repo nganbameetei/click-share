@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
-import { LayoutGrid, History as HistoryIcon, Wallet as WalletIcon, Crown, Shield, LogOut, Megaphone } from 'lucide-react';
+import { LayoutGrid, History as HistoryIcon, Wallet as WalletIcon, Crown, Shield, LogOut, Megaphone, Gift } from 'lucide-react';
 import { useAuth } from './auth';
 import { Logo, PageLoader } from './ui';
 import { rupee } from './api';
@@ -11,6 +11,7 @@ import Wallet from './pages/Wallet';
 import Plans from './pages/Plans';
 import Admin from './pages/Admin';
 import Promote from './pages/Promote';
+import Refer from './pages/Refer';
 
 function Protected({ admin }) {
   const { user, ready } = useAuth();
@@ -28,7 +29,8 @@ function AppShell() {
     { to: '/app/promote', label: 'Promote', Icon: Megaphone },
     { to: '/app/history', label: 'My Tasks', Icon: HistoryIcon },
     { to: '/app/wallet', label: 'Wallet', Icon: WalletIcon },
-    { to: '/app/plans', label: 'Plans', Icon: Crown },
+    { to: '/app/refer', label: 'Refer', Icon: Gift },
+    { to: '/app/plans', label: 'Plans', Icon: Crown, desktopOnly: true }, // mobile: via "Upgrade" on Earn
     ...(user.Role === 'admin' ? [{ to: '/admin', label: 'Admin', Icon: Shield }] : []),
   ];
   const linkCls = ({ isActive }) =>
@@ -76,8 +78,8 @@ function AppShell() {
 
         {/* Bottom nav (mobile) */}
         <nav className="fixed inset-x-0 bottom-0 z-30 grid border-t border-white/10 bg-ink-950/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
-             style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }}>
-          {nav.map(({ to, label, Icon, end }) => (
+             style={{ gridTemplateColumns: `repeat(${nav.filter((n) => !n.desktopOnly).length}, minmax(0, 1fr))` }}>
+          {nav.filter((n) => !n.desktopOnly).map(({ to, label, Icon, end }) => (
             <NavLink key={to} to={to} end={end}
               className={({ isActive }) => `flex flex-col items-center gap-1 py-2.5 text-[11px] font-semibold ${isActive ? 'text-fuchsia-300' : 'text-slate-500'}`}>
               <Icon size={20} /> {label}
@@ -98,6 +100,7 @@ export default function App() {
       <Route path="/app" element={<Protected />}>
         <Route index element={<Dashboard />} />
         <Route path="promote" element={<Promote />} />
+        <Route path="refer" element={<Refer />} />
         <Route path="history" element={<History />} />
         <Route path="wallet" element={<Wallet />} />
         <Route path="plans" element={<Plans />} />

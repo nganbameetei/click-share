@@ -21,6 +21,8 @@ Users earn small rewards for liking, following and sharing advertiser posts on F
 | There is no referral income from joining fees, which keeps the app clear of money-circulation laws. | — |
 | **Users can post their own tasks** (Promote page) at a fixed price per action (`PRICE_SHARE` ₹0.05, `PRICE_LIKE` ₹0.20, `PRICE_FOLLOW` ₹0.50). The cost is paid up front from ad credits first, then earnings. Doers get 40% (+ plan bonus) and the platform keeps the rest. | `backend/src/routes/promote.js` |
 | User-posted tasks go live only after **admin review**. A rejected task, a stopped task's unused slots, and rejected proofs are refunded as ad credits. Users can't do their own tasks. | Admin → Campaigns |
+| **Referrals (single level):** every user has a code (`/signup?ref=CODE`). The inviter earns `REFERRAL_TASK_PCT` (10%) of the friend's approved task rewards for `REFERRAL_TASK_DAYS` (90) days, paid by the platform on top (the friend keeps 100%). After `REFERRAL_MIN_TASKS` (10) approved tasks, the inviter gets `REFERRAL_INVITER_BONUS` (₹2) and the friend `REFERRAL_FRIEND_BONUS` (₹1). **Nothing is paid from plan fees or added funds.** That keeps it legal (no money circulation). | `backend/src/referral.js` |
+| **Admin wallet changes:** Admin → Users → Credit adds or deducts money on Earnings (withdrawable) or Ad credits, with a required remark. Deductions can't go below ₹0. Every change is in the user's wallet history. | `POST /api/admin/users/:id/credit` |
 | **Add funds:** users pay by UPI and enter the UTR, then an admin approves it as **ad credits**. Ad credits can only be spent on promotion and can't be withdrawn, so the app doesn't take withdrawable deposits. A UTR can't be used twice. | Admin → Add funds |
 
 ## Setup

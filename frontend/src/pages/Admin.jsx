@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Ban, Check, Crown, ExternalLink, Inbox, Megaphone, Pause, Play, Plus, Search, X } from 'lucide-react';
+import { Ban, Check, Crown, ExternalLink, Inbox, Megaphone, Pause, Play, Plus, Search, Wallet, X } from 'lucide-react';
 import { api, rupee, timeAgo } from '../api';
 import { ACTIONS, Empty, Modal, PageLoader, PLATFORMS, PlatformTile, Spinner, StatusBadge, useToast } from '../ui';
 
@@ -52,6 +52,8 @@ function Overview({ goto }) {
     ['Wallet liability', rupee(s.Liability), 'owed to users'],
     ['Funds added', rupee(s.Deposited), 'by users to promote posts'],
     ['Ad credits', rupee(s.AdCredits), 'unspent, not withdrawable'],
+    ['Referral rewards', rupee(s.ReferralPaid), `${s.ReferredUsers} users joined by referral`],
+    ['Admin credits', rupee(s.AdminCredits), 'added minus deducted by admins'],
   ];
   const queues = [
     ['proofs', 'Proofs to review', s.PendingSubmissions],
@@ -462,6 +464,98 @@ function ChangePlanModal({ user, onClose, onDone }) {
   );
 }
 
+/* ---------------- Add / deduct money on a user's wallet ---------------- */
+const CREDIT_REMARKS = ['Contest prize', 'Bonus', 'Compensation', 'Correction'];
+
+function CreditModal({ user, onClose, onDone }) {
+  const toast = useToast();
+  const [f, setF] = useState({ wallet: 'earnings', type: 'add', amount: '', remark: '' });
+  const [history, setHistory] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api(`/admin/users/${user.Id}/credits`).then(setHistory).catch(() => setHistory([])); }, [user]);
+
+  const current = f.wallet === 'ad' ? user.AdBalance : user.Balance;
+  const amt = Number(f.amount) || 0;
+  const after = f.type === 'add' ? current + amt : current - amt;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/admin/users/${user.Id}/credit`, { method: 'POST', body: f });
+      toast(`${f.type === 'add' ? 'Added' : 'Deducted'} ${rupee(amt)} ${f.type === 'add' ? 'to' : 'from'} ${user.Name}`);
+      onDone();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const seg = (key, value, label) => (
+    <button type="button" onClick={() => setF({ ...f, [key]: value })}
+      className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition ${f[key] === value ? 'bg-fuchsia-500/20 text-white ring-1 ring-fuchsia-500/50' : 'bg-white/5 text-slate-400 hover:text-white'}`}>{label}</button>
+  );
+
+  return (
+    <Modal open onClose={onClose} title={`Wallet · ${user.Name}`}>
+      <div className="max-h-[72vh] space-y-4 overflow-y-auto pr-1">
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="label">Wallet</label>
+            <div className="grid grid-cols-2 gap-2">
+              {seg('wallet', 'earnings', `Earnings · ${rupee(user.Balance)}`)}
+              {seg('wallet', 'ad', `Ad credits · ${rupee(user.AdBalance)}`)}
+            </div>
+            <p className="mt-1 text-xs text-slate-500">{f.wallet === 'ad' ? 'Ad credits can only be spent on promoting posts.' : 'Earnings can be withdrawn to UPI by the user.'}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {seg('type', 'add', '+ Add money')}
+            {seg('type', 'deduct', '− Deduct money')}
+          </div>
+          <div><label className="label">Amount (₹)</label>
+            <input className="input" type="number" min="0.01" step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} required /></div>
+          <div>
+            <label className="label">Remark (required)</label>
+            <input className="input" placeholder="e.g. Winner of weekly contest" maxLength={200} value={f.remark} onChange={(e) => setF({ ...f, remark: e.target.value })} required />
+            <div className="mt-2 flex flex-wrap gap-2">
+              {CREDIT_REMARKS.map((r) => (
+                <button type="button" key={r} onClick={() => setF({ ...f, remark: r })}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold ${f.remark === r ? 'bg-fuchsia-500/20 text-fuchsia-200' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>{r}</button>
+              ))}
+            </div>
+          </div>
+          {amt > 0 && (
+            <div className={`rounded-xl p-3 text-sm ${after < 0 ? 'bg-rose-500/10 text-rose-200' : 'bg-white/5'}`}>
+              {rupee(current)} → <b>{rupee(after)}</b>{after < 0 && ' (not enough balance)'}
+            </div>
+          )}
+          <button className={f.type === 'add' ? 'btn-success w-full py-3' : 'btn-danger w-full py-3'} disabled={busy || after < 0}>
+            {busy ? <Spinner /> : `${f.type === 'add' ? 'Add' : 'Deduct'} ${rupee(amt)}`}
+          </button>
+        </form>
+
+        <div>
+          <div className="label">Previous admin changes</div>
+          {history === null ? <Spinner /> : history.length === 0 ? <p className="text-xs text-slate-500">None yet.</p> : (
+            <div className="divide-y divide-white/5 rounded-xl bg-white/[0.03]">
+              {history.map((h) => (
+                <div key={h.Id} className="flex items-start justify-between gap-3 p-3 text-xs">
+                  <div>
+                    <div className="text-slate-200">{h.Note}</div>
+                    <div className="text-slate-500">{h.AdminName || 'Admin'} · {fmtDate(h.CreatedAt)}</div>
+                  </div>
+                  <div className={`font-bold ${h.Type === 'credit' ? 'text-emerald-300' : 'text-rose-300'}`}>{h.Type === 'credit' ? '+' : '−'}{rupee(h.Amount)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ---------------- Users ---------------- */
 function Users() {
   const [q, setQ] = useState('');
@@ -469,6 +563,7 @@ function Users() {
   const [rows, load] = useList(`/admin/users?q=${encodeURIComponent(search)}`);
   const [busyId, run] = useAction(load);
   const [planUser, setPlanUser] = useState(null);
+  const [creditUser, setCreditUser] = useState(null);
   return (
     <>
       <form className="relative mb-4 max-w-sm" onSubmit={(e) => { e.preventDefault(); setSearch(q); }}>
@@ -484,16 +579,25 @@ function Users() {
             <tbody className="divide-y divide-white/5">
               {rows.map((u) => (
                 <tr key={u.Id} className={u.IsBlocked ? 'opacity-50' : ''}>
-                  <td className="px-4 py-3"><div className="font-semibold">{u.Name} {u.Role !== 'user' && <span className="ml-1 rounded bg-fuchsia-500/20 px-1.5 py-0.5 text-[10px] uppercase text-fuchsia-300">{u.Role}</span>}</div><div className="text-xs text-slate-500">{u.Email}</div></td>
+                  <td className="px-4 py-3"><div className="font-semibold">{u.Name} {u.Role !== 'user' && <span className="ml-1 rounded bg-fuchsia-500/20 px-1.5 py-0.5 text-[10px] uppercase text-fuchsia-300">{u.Role}</span>}</div><div className="text-xs text-slate-500">{u.Email}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      <span className="font-mono text-fuchsia-300">{u.ReferralCode}</span>
+                      {u.Referrals > 0 && <> · invited {u.Referrals}</>}
+                      {u.ReferredByName && <> · by {u.ReferredByName}</>}
+                    </div></td>
                   <td className="px-4 py-3">
                     <div className={u.PlanExpired ? 'text-slate-500 line-through' : 'font-semibold'}>{u.PlanName}</div>
                     {u.PlanId > 1 && <div className={`text-xs ${u.PlanExpired ? 'text-rose-300' : 'text-slate-500'}`}>{u.PlanExpired ? 'expired' : 'until'} {fmtDate(u.PlanExpiresAt)}</div>}
                   </td>
-                  <td className="px-4 py-3 font-semibold">{rupee(u.Balance)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold">{rupee(u.Balance)}</div>
+                    {u.AdBalance > 0 && <div className="text-xs text-fuchsia-300">{rupee(u.AdBalance)} ad</div>}
+                  </td>
                   <td className="px-4 py-3">{rupee(u.TotalEarned)}</td>
                   <td className="px-4 py-3 text-slate-400">{timeAgo(u.CreatedAt)}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
+                      <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setCreditUser(u)}><Wallet size={14} /> Credit</button>
                       <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setPlanUser(u)}><Crown size={14} /> Plan</button>
                       {u.Role !== 'admin' && (
                         <button className="btn-ghost px-3 py-1.5 text-xs" disabled={busyId === u.Id} onClick={() => run(u.Id, `/admin/users/${u.Id}/block`, null, u.IsBlocked ? 'Unblocked' : 'Blocked')}>
@@ -509,6 +613,7 @@ function Users() {
         </div>
       )}
       {planUser && <ChangePlanModal user={planUser} onClose={() => setPlanUser(null)} onDone={() => { setPlanUser(null); load(); }} />}
+      {creditUser && <CreditModal user={creditUser} onClose={() => setCreditUser(null)} onDone={() => { setCreditUser(null); load(); }} />}
     </>
   );
 }

@@ -64,12 +64,21 @@ async function initDb() {
     ['PlanPurchases', 'Remark', 'TEXT'],
     ['PlanPurchases', 'GrantedBy', 'INTEGER'],
     ['PlanPurchases', 'ExpiresAt', 'TEXT'],
+    ['Users', 'ReferralCode', 'TEXT'],
+    ['Users', 'ReferredBy', 'INTEGER'],
+    ['Users', 'ReferralBonusPaid', 'INTEGER NOT NULL DEFAULT 0'],
   ];
   for (const [table, col, def] of added) {
     const cols = await query(`SELECT name FROM pragma_table_info('${table}')`);
     if (cols.length && !cols.some((c) => c.name === col)) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
   }
   await client.batch(statements, 'write');
+
+  // Give every existing user a referral code
+  const { newReferralCode } = require('./referral');
+  for (const u of await query('SELECT Id FROM Users WHERE ReferralCode IS NULL')) {
+    await query('UPDATE Users SET ReferralCode=@code WHERE Id=@id', { id: u.Id, code: newReferralCode() });
+  }
 }
 
 module.exports = { query, tx, initDb, client, NOW };

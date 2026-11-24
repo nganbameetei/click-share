@@ -2,14 +2,15 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { query, initDb, client } = require('../src/db');
+const { newReferralCode } = require('../src/referral');
 
 async function upsertUser(name, email, password, role) {
   const [u] = await query('SELECT Id FROM Users WHERE Email=@email', { email });
   if (u) return u.Id;
   const hash = await bcrypt.hash(password, 10);
   const [n] = await query(
-    'INSERT INTO Users (Name, Email, PasswordHash, Role) VALUES (@name, @email, @hash, @role) RETURNING Id',
-    { name, email, hash, role });
+    'INSERT INTO Users (Name, Email, PasswordHash, Role, ReferralCode) VALUES (@name, @email, @hash, @role, @code) RETURNING Id',
+    { name, email, hash, role, code: newReferralCode() });
   return n.Id;
 }
 
